@@ -1,0 +1,24 @@
+diff --git a/include/triton/Dialect/Triton/IR/TritonOps.td b/include/triton/Dialect/Triton/IR/TritonOps.td
+index bdab1bd33..063aec78e 100644
+--- a/include/triton/Dialect/Triton/IR/TritonOps.td
++++ b/include/triton/Dialect/Triton/IR/TritonOps.td
+@@ -1132,6 +1132,7 @@ def CallOp : TT_Op<"call", [CallOpInterface, /*MemRefsNormalizable, */DeclareOpI
+ 
+ def FuncOp : TT_Op<"func", [
+     AffineScope, AutomaticAllocationScope, CallableOpInterface,
++    SymbolName, SymbolVisibility,
+     FunctionOpInterface, IsolatedFromAbove, OpAsmOpInterface,
+     HasParent<"ModuleOp">
+ ]> {
+diff --git a/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp b/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp
+index b0f1f92bf..d008497a3 100644
+--- a/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp
++++ b/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp
+@@ -276,6 +276,7 @@ struct ElementwiseInlineAsmOpConversion
+                            /*constraints=*/op.getConstraints(),
+                            /*has_side_effects=*/!op.getPure(),
+                            /*is_align_stack=*/false, LLVM::TailCallKind::None,
++                           /*convergent=*/false,
+                            /*asm_dialect=*/
+                            LLVM::AsmDialectAttr::get(rewriter.getContext(),
+                                                      LLVM::AsmDialect::AD_ATT),
