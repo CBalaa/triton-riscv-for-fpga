@@ -25,28 +25,17 @@ if [[ ! -d "${LLVM_SYSPATH}" ]]; then
   exit 1
 fi
 
-_expected_python_tag="$("${TRITON_VENV}/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-
-if [[ -n "${BUILD_DIR:-}" && -d "${BUILD_DIR}" ]]; then
-  _reconfigure_build_dir=0
-
-  if [[ "${BUILD_DIR}" != *"cpython-${_expected_python_tag}" ]]; then
-    _reconfigure_build_dir=1
-  fi
-
+if [[ -n "${BUILD_DIR:-}" ]]; then
+  # Custom build directory names need not contain an interpreter tag. Let
+  # CMake validate their configuration; never delete an explicitly chosen tree.
   if [[ -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
     _cached_build_root="$(sed -n 's|^# For build in directory: ||p' "${BUILD_DIR}/CMakeCache.txt" | head -n1)"
     if [[ -n "${_cached_build_root}" && "${_cached_build_root}" != "${BUILD_DIR}" ]]; then
-      _reconfigure_build_dir=1
+      echo "Moved CMake cache in ${BUILD_DIR}; select a fresh TRITON_BUILD_DIR." >&2
+      exit 1
     fi
   fi
-
-  if [[ "${_reconfigure_build_dir}" -eq 1 ]]; then
-    echo "Removing stale Triton build directory: ${BUILD_DIR}" >&2
-    rm -rf "${BUILD_DIR}"
-    unset BUILD_DIR
-    unset TRITON_SHARED_OPT_PATH
-  fi
+  export TRITON_BUILD_DIR="${BUILD_DIR}"
 fi
 
 cd "${TRITON_DIR}"
@@ -72,7 +61,7 @@ repo_root = pathlib.Path(sys.argv[1]).resolve()
 src_dir = repo_root / "backend"
 dst_dir = pathlib.Path(compiler.__file__).resolve().parent
 
-for name in ("compiler.py", "driver.py", "riscv.py"):
+for name in ("compiler.py", "driver.py", "riscv.py", "paths.py", "contract.py"):
     src = src_dir / name
     dst = dst_dir / name
     if not src.is_file():
@@ -84,25 +73,20 @@ for name in ("compiler.py", "driver.py", "riscv.py"):
 
 pycache = dst_dir / "__pycache__"
 if pycache.is_dir():
-    for pattern in ("compiler*.pyc", "driver*.pyc", "riscv*.pyc"):
+    for pattern in ("compiler*.pyc", "driver*.pyc", "riscv*.pyc", "paths*.pyc", "contract*.pyc"):
         for pyc in pycache.glob(pattern):
             pyc.unlink()
 
 print(f"Synced triton_shared backend Python files to {dst_dir}")
 PY
 
-if [[ -z "${BUILD_DIR:-}" || ! -d "${BUILD_DIR}" || ! -x "${TRITON_SHARED_OPT_PATH:-}" ]]; then
-  BUILD_DIR="$(
-    find "${TRITON_DIR}/build" -maxdepth 1 -mindepth 1 -type d -name "cmake.linux-*-cpython-${_expected_python_tag}" 2>/dev/null | sort | head -n1 || true
-  )"
-  if [[ -z "${BUILD_DIR:-}" ]]; then
-    BUILD_DIR="$(
-      find "${TRITON_DIR}/build" -maxdepth 1 -mindepth 1 -type d -name 'cmake.linux-*-cpython-*' 2>/dev/null | sort | head -n1 || true
-    )"
-  fi
+if [[ -z "${BUILD_DIR:-}" ]]; then
+  # Ask the Python build helper for this interpreter's directory. Never select
+  # an older build by sorting directory names.
+  BUILD_DIR="$(PYTHONPATH="${TRITON_DIR}/python" "${TRITON_VENV}/bin/python" -c 'from build_helpers import get_cmake_dir; print(get_cmake_dir())')"
   export BUILD_DIR
-  export TRITON_SHARED_OPT_PATH="${BUILD_DIR}/third_party/triton_shared/tools/triton-shared-opt/triton-shared-opt"
 fi
+export TRITON_SHARED_OPT_PATH="${BUILD_DIR}/third_party/triton_shared/tools/triton-shared-opt/triton-shared-opt"
 
 if [[ -z "${BUILD_DIR:-}" || ! -d "${BUILD_DIR}" ]]; then
   echo "Unable to locate Triton build directory under ${TRITON_DIR}/build" >&2
@@ -118,7 +102,5 @@ fi
 "${TRITON_SHARED_OPT_PATH}" --version
 
 unset _cached_build_root
-unset _expected_python_tag
-unset _reconfigure_build_dir
 unset _triton_riscv_repo_root
 unset _triton_riscv_script_dir

@@ -10,7 +10,13 @@ _triton_riscv_repo_root="$(cd "${_triton_riscv_env_dir}/.." && pwd)"
 
 TRITON_RISCV_DIR="${TRITON_RISCV_DIR:-${_triton_riscv_repo_root}}"
 _default_triton_venv="${TRITON_RISCV_DIR}/.venv"
-TRITON_DIR="${TRITON_DIR:-$(cd "${TRITON_RISCV_DIR}/../triton" && pwd)}"
+if [[ -z "${TRITON_DIR:-}" ]]; then
+  if [[ -d "${TRITON_RISCV_DIR}/triton" ]]; then
+    TRITON_DIR="${TRITON_RISCV_DIR}/triton"
+  else
+    TRITON_DIR="${TRITON_RISCV_DIR}/../triton"
+  fi
+fi
 
 if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" && ( -z "${TRITON_VENV:-}" || "${TRITON_VENV}" == "${_default_triton_venv}" ) ]]; then
   TRITON_VENV="${CONDA_PREFIX}"
@@ -24,7 +30,7 @@ elif [[ -z "${TRITON_VENV:-}" ]]; then
   fi
 fi
 
-BUDDY_DIR="${BUDDY_DIR:-$(cd "${TRITON_RISCV_DIR}/../buddy-mlir" && pwd)}"
+BUDDY_DIR="${BUDDY_DIR:-${TRITON_RISCV_DIR}/../buddy-mlir}"
 TRITON_HOME="${TRITON_HOME:-${HOME}}"
 TRITON_RUNTIME_ROOT="${TRITON_RUNTIME_ROOT:-${HOME}/.triton}"
 TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${TRITON_RUNTIME_ROOT}/cache}"
@@ -33,24 +39,10 @@ TRITON_OVERRIDE_DIR="${TRITON_OVERRIDE_DIR:-${TRITON_RUNTIME_ROOT}/override}"
 TRITON_SHARED_DUMP_PATH="${TRITON_SHARED_DUMP_PATH:-${TRITON_DUMP_DIR}/shared}"
 
 if [[ -z "${BUILD_DIR:-}" ]]; then
-  _detected_python_tag=""
-  if [[ -x "${TRITON_VENV}/bin/python" ]]; then
-    _detected_python_tag="$("${TRITON_VENV}/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  BUILD_DIR=""
+  if [[ -x "${TRITON_VENV}/bin/python" && -f "${TRITON_DIR}/python/build_helpers.py" ]]; then
+    BUILD_DIR="$(PYTHONPATH="${TRITON_DIR}/python" "${TRITON_VENV}/bin/python" -c 'from build_helpers import get_cmake_dir; print(get_cmake_dir())')"
   fi
-
-  if [[ -n "${_detected_python_tag}" ]]; then
-    _detected_build_dir="$(
-      find "${TRITON_DIR}/build" -maxdepth 1 -mindepth 1 -type d -name "cmake.linux-*-cpython-${_detected_python_tag}" 2>/dev/null | sort | head -n1 || true
-    )"
-  fi
-
-  if [[ -z "${_detected_build_dir:-}" ]]; then
-    _detected_build_dir="$(
-      find "${TRITON_DIR}/build" -maxdepth 1 -mindepth 1 -type d -name 'cmake.linux-*-cpython-*' 2>/dev/null | sort | head -n1 || true
-    )"
-  fi
-
-  BUILD_DIR="${_detected_build_dir}"
 fi
 
 if [[ -z "${TRITON_SHARED_OPT_PATH:-}" ]]; then

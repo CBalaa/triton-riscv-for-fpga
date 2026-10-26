@@ -20,14 +20,20 @@ Python @triton.jit
 ## Clone
 
 ```sh
-git clone https://github.com/RuyiAI-Stack/triton-riscv.git triton-riscv
+git clone --branch spm https://github.com/CBalaa/triton-riscv-for-fpga.git triton-riscv
 TRITON_RISCV_DIR="$(pwd)/triton-riscv"
 git clone https://github.com/triton-lang/triton.git triton
 cd triton && git checkout "$(cat "${TRITON_RISCV_DIR}/triton-hash.txt")"
 cd "${TRITON_RISCV_DIR}/.."
-git clone https://github.com/buddy-compiler/buddy-mlir.git buddy-mlir
+git clone --branch spm https://github.com/CBalaa/buddy-mlir-for-fpga.git buddy-mlir
 cd buddy-mlir && git checkout "$(head -n 1 "${TRITON_RISCV_DIR}/buddy-hash.txt")"
 ```
+
+The first line of `buddy-hash.txt` pins the Buddy source commit for this FPGA
+branch. Build its LLVM/MLIR and Buddy tools from that checkout for BOSCAME
+workflows. The second line names the upstream prebuilt toolchain release used
+by `scripts/build.sh` for CPU CI; those packages do not contain this branch's
+BOSCAME backend. AOT Contract export itself needs only LLVM/MLIR and Triton.
 
 > Note: Ensure PyTorch is available in your virtual environment. For RISC-V, since PyTorch does not officially support RISC-V yet, you can build from source or use third-party builds: https://community-ci.openruyi.cn/pypi/riscv64/dev/+simple/torch . To use the third-party builds, python 3.12 or 3.13 are required.
 
@@ -192,3 +198,10 @@ Preload the correct Fortran library by adding the following to your virtualenvâ€
 ```sh
 export LD_PRELOAD=/usr/lib64/libgfortran.so.5:$LD_PRELOAD
 ```
+
+## BOSCAME AOT Contract export
+
+The optional `boscame` target exports verified standard buffer MLIR and a
+manifest without a device driver or Buddy build dependency. See
+[the AOT API and build guide](docs/BoscameAOT.md). CPUBackend remains the only
+concrete backend plugin; CPU/RISC-V/IME defaults are unchanged.
