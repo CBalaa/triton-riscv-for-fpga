@@ -21,8 +21,9 @@ classifier Linear chain passes four numerical stress rounds, and PV passes
 three complete grids (1872 programs, 453888 bit-exact f32 outputs).
 W8A8 dense linears are the default model path;
 complete-model execution and accuracy remain unverified. See [VALIDATION.md](VALIDATION.md)
-for the exact cases, diagnostics and numerical evidence. Nothing has been
-executed on a board.
+for the exact cases, diagnostics and numerical evidence. Individual NH/E6
+operator board runs are recorded separately in [BOARD_RESULTS.md](BOARD_RESULTS.md);
+operator success does not establish complete-model execution or accuracy.
 
 ## Directory layout
 
@@ -32,7 +33,7 @@ Each operator is independent:
 add_197x768/
     kernel.py       # Real @triton.jit body and literal KERNEL_CONFIG
     launch.c        # Independent int launch(void), input generation and oracle
-    makefile        # Includes ../common.mk's file-based compiler stages
+    makefile        # Compiler stages; board-enabled cases default to bin
 ```
 
 The same layout applies to all 40 cases. Each `kernel.py` owns its shape,
@@ -131,7 +132,65 @@ kernel.ttir
 The `asm` stage includes the same fixed-register AME encoder and strict NR
 assembly restriction used by the standalone example, followed by RISC-V
 assembly to an object. It does not link a boot image or run the board.
-The C oracle support is host-only; this port does not claim a board runtime.
+For board-enabled cases, `bin` links the NH/E6 board runtime described below.
+The `asm` stage alone does not execute or validate an operator.
+
+## Build and run on FPGA
+
+Use the `boscame` conda environment and this repository's `buddy-mlir` checkout.
+The 22 operators marked PASS in [BOARD_RESULTS.md](BOARD_RESULTS.md) have
+default Make target `bin`; compiler and simulator targets remain available
+explicitly. Board build entries for the other 18 operators are not included
+in this checkpoint. The accepted `add_1x768` example retains its standalone
+board launcher and linker script. The other passing operators share
+`board.mk`, `board.ld` and `tools/board_support.c`, using the in-tree Buddy
+NH/E6 boot, PMP, cache, UART and DMA support.
+
+```bash
+conda activate boscame
+source scripts/triton-riscv-env.sh
+export BUDDY_ROOT="$PWD/buddy-mlir"
+VIT=examples/BOSCAMEFPGA/vit-base-patch16-224
+
+make -C "$VIT/add_197x768"
+python examples/BOSCAMEFPGA/run_bin.py \
+  "$VIT/build/kernels/add_197x768/board/add_197x768.bin"
+
+# Avoid recomputing an expensive scalar reference on the FPGA.
+make -C "$VIT/matmul_i8_197x768x768" bin GOLDEN=1
+python examples/BOSCAMEFPGA/run_bin.py \
+  "$VIT/build/kernels/matmul_i8_197x768x768/board/matmul_i8_197x768x768.bin"
+
+# Submit existing images one at a time and preserve evidence.
+python "$VIT/tools/run_board_suite.py" \
+  --case add_197x768 --report-dir "$VIT/build/board-runs/manual"
+```
+
+The user-managed SSH tunnel is `ssh -N -L 18765:localhost:18765 fpga`.
+The user-provided `../run_bin.py` submits to its scheduler, which queues jobs
+and executes one operator at a time. The current execution deadline is 120 seconds, including
+image load and CPU reset, with queue wait excluded. A deadline with UART
+output is reported as `TIMEOUT`; a deadline with no UART is `HANG`.
+
+`GOLDEN=1` embeds independent expected outputs for integer matmuls. The
+shared reference generator also handles floating-point linears, QK/PV
+attention and composed patch embedding; their board attempts remain
+unsuccessful as recorded in [BOARD_RESULTS.md](BOARD_RESULTS.md).
+`tools/board_golden.py` evaluates the original `launch.c` scalar expected
+formula on the host, retaining the original input initialization and
+tolerance. The board still runs the real typed adapter and compares every output against the embedded reference.
+`golden_manifest.json` records provenance, coverage and hashes. These host
+reference checks alone do not establish board correctness. `GOLDEN=0`
+(the default) keeps the scalar oracle on the board.
+
+The reported `kernel_cycles` uses the E6 cycle counter around the complete
+typed adapter, including grid dispatch, DMA and the final fence. It excludes
+input initialization, numerical validation and UART. A board `PASS` requires
+the expected invocations to return, numerical validation to complete, and
+zero errors. A timeout without a kernel return has no completed cycle count.
+The suite preserves each submitted binary and SHA256, full console and UART
+logs, scheduler task details, ELF audit and per-case result JSON under the
+selected report directory.
 
 `build/build-report.json`, `build/simcheck-report.json` and per-case result
 files preserve the actual stage and diagnostic. Compiler stdout/stderr is
