@@ -39,8 +39,8 @@ $(BOARD)/dma.o: $(DMA_RUNTIME)/bosc_ame_dma.c $(DMA_RUNTIME)/bosc_ame_dma.h make
 	$(CLANG) $(BOARD_FLAGS) -c $< -o $@
 $(BOARD_ELF): $(BOARD_OBJECTS) link.ld makefile
 	$(LINKER) -m elf64lriscv --gc-sections -T link.ld -Map=$(BOARD)/$(CASE).map -o $@ $(BOARD_OBJECTS)
-$(BOARD_BIN): $(BOARD_ELF) $(BUDDY_TOOLS)/check_nr_elf.py
-	$(PYTHON) $(BUDDY_TOOLS)/check_nr_elf.py $< --objdump $(OBJDUMP) --output $(BOARD)/elf-audit.json
+$(BOARD_BIN): $(BOARD_ELF) $(BUDDY_TOOLS)/check_nr_elf.py $(OUT)/.ordered-reduction-policy $(FPGA_REDUCTION_POLICY_MAKEFILE)
+	$(PYTHON) $(BUDDY_TOOLS)/check_nr_elf.py $< --objdump $(OBJDUMP) $(ORDERED_REDUCTION_FLAGS) --output $(BOARD)/elf-audit.json
 	$(OBJCOPY) -O binary $< $@
 .PHONY: bin
 bin: $(BOARD_BIN)

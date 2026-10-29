@@ -7,6 +7,9 @@
 
 unsigned vit_board_kernel_begin(void);
 void vit_board_kernel_end(unsigned slot, uint64_t cycles);
+void vit_board_validation_round(unsigned round, unsigned checked,
+                                unsigned errors, unsigned guard_errors,
+                                unsigned input_errors, uint64_t output_hash);
 uint32_t vit_board_mmio_read32(uintptr_t address);
 float fabsf(float value);
 

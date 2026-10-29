@@ -18,6 +18,14 @@ static volatile unsigned kernel_returned, validation_executed;
 static volatile unsigned checked, errors, maximum_bits;
 static volatile uint64_t diagnostic_values[8];
 static unsigned diagnostic_count;
+#if defined(VIT_BOARD_ACCUMULATOR_VALIDATION)
+typedef struct __attribute__((aligned(64))) {
+  volatile uint64_t output_hash;
+  volatile unsigned checked, errors, guard_errors, input_errors, completed;
+  unsigned char padding[36];
+} ValidationSlot;
+static ValidationSlot validation_slots[VIT_BOARD_VALIDATION_ROUNDS];
+#endif
 
 /* NH owns this cell; .data keeps it out of E6's boot-time BSS clear. */
 static unsigned nh_reported __attribute__((section(".data.nh_reported"))) = ~0u;
@@ -98,6 +106,32 @@ void vit_board_kernel_end(unsigned slot, uint64_t cycles) {
   nh_e6_progress(0x2000u + slot + 1);
 }
 
+void vit_board_validation_round(unsigned round, unsigned count,
+                                unsigned count_errors, unsigned guard_errors,
+                                unsigned input_errors, uint64_t output_hash) {
+#if defined(VIT_BOARD_ACCUMULATOR_VALIDATION)
+  if (round < VIT_BOARD_VALIDATION_FIRST_ROUND ||
+      round - VIT_BOARD_VALIDATION_FIRST_ROUND >= VIT_BOARD_VALIDATION_ROUNDS)
+    __builtin_trap();
+  ValidationSlot *slot = &validation_slots[round - VIT_BOARD_VALIDATION_FIRST_ROUND];
+  slot->output_hash = output_hash;
+  slot->checked = count;
+  slot->errors = count_errors;
+  slot->guard_errors = guard_errors;
+  slot->input_errors = input_errors;
+  __asm__ volatile("fence rw, rw" ::: "memory");
+  slot->completed = 1;
+#else
+  (void)round;
+  (void)count;
+  (void)count_errors;
+  (void)guard_errors;
+  (void)input_errors;
+  (void)output_hash;
+  __builtin_trap();
+#endif
+}
+
 static void report_cycles(unsigned completed) {
   while (nh_reported < completed) {
     unsigned slot = nh_reported++;
@@ -137,6 +171,21 @@ void board_init_uart(uint32_t frequency, uint32_t baud) {
 void nh_e6_app_report(void) {
   unsigned returned = kernel_returned;
   if (returned <= VIT_BOARD_EXPECTED_INVOCATIONS) report_cycles(returned);
+#if defined(VIT_BOARD_ACCUMULATOR_VALIDATION)
+  for (unsigned round = 0; round < VIT_BOARD_VALIDATION_ROUNDS; ++round) {
+    const ValidationSlot *slot = &validation_slots[round];
+    if (!slot->completed) continue;
+    nh_e6_print_tag_prefix();
+    print_uart("validation_round=");
+    print_uart_dec32(round + VIT_BOARD_VALIDATION_FIRST_ROUND);
+    print_uart(" checked="); print_uart_dec32(slot->checked);
+    print_uart(" errors="); print_uart_dec32(slot->errors);
+    print_uart(" guard_errors="); print_uart_dec32(slot->guard_errors);
+    print_uart(" input_errors="); print_uart_dec32(slot->input_errors);
+    print_uart(" output_fnv64=0x"); print_uart_hex64(slot->output_hash);
+    print_uart("\r\n");
+  }
+#endif
   nh_e6_print_tag_prefix();
   print_uart("kernel_returned="); print_uart_dec32(returned);
   print_uart(" validation_executed="); print_uart_dec32(validation_executed);

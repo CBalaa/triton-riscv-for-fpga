@@ -10,7 +10,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from cases import describe
+from cases import describe  # noqa: E402
 
 PATCH_DEPENDENCIES = (
     "quantize_196x768", "quantize_768x768",
@@ -22,11 +22,14 @@ def dependencies(case):
     return PATCH_DEPENDENCIES if case["family"] == "patch_embed" else ()
 
 
-def configuration(case):
+def configuration(case, accumulator_validation=False, accumulator_round=None):
     family, shape = case["family"], case["shape"]
-    trials = 2 if family == "per_token_quantization" else 1
+    if accumulator_validation and family not in ("matmul_i8", "matmul_i8_overwrite"):
+        raise ValueError("accumulator diagnostic requires an integer matmul")
+    round_ids = ([accumulator_round] if accumulator_round is not None else [0, 1, 2])
+    trials = len(round_ids) if accumulator_validation else 2 if family == "per_token_quantization" else 1
     if family in ("linear", "matmul_i8", "matmul_i8_overwrite"):
-        checked = shape[0] * shape[1]
+        checked = shape[0] * shape[1] * trials
     elif family.startswith("attention_"):
         checked = math.prod(shape[:3])
     elif family == "patch_embed":
@@ -39,6 +42,13 @@ def configuration(case):
         "case": case["name"], "expected_invocations": trials,
         "expected_checked": checked, "dependencies": list(dependencies(case)),
         "cycle_scope": "complete typed adapter including grid dispatch and DMA; final fence; excludes initialization, validation, UART",
+        **({"validation_mode": "accumulator_three_round_bit_exact",
+            "program_orders": [["forward", "tail-first", "reverse"][round_id] for round_id in round_ids],
+            "validation_rounds": trials,
+            "validation_round_ids": round_ids,
+            "expected_checked_per_round": shape[0] * shape[1],
+            "guard_bytes_per_side_per_argument": 64,
+            "inputs_checked_bytewise": True} if accumulator_validation else {}),
     }
 
 
@@ -73,6 +83,8 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--dependencies", action="store_true")
     parser.add_argument("--adapter-source", type=Path)
+    parser.add_argument("--accumulator-validation", action="store_true")
+    parser.add_argument("--accumulator-round", type=int, choices=(0, 1, 2))
     args = parser.parse_args()
     case = describe(args.case)
     if args.dependencies:
@@ -83,6 +95,26 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     if args.adapter_source is not None:
         source = args.adapter_source.read_text()
+        if args.accumulator_validation:
+            configuration(case, True)
+            # Keep the real entry and all descriptor checks. Only dispatch
+            # order changes; each real program appears exactly once per call.
+            prefix = "extern unsigned vit_accumulator_order;\n"
+            for axis, variable in enumerate(("x", "y", "z")):
+                extent = case["grid"][axis]
+                original = f"for (int32_t {variable} = 0; {variable} < {extent}; ++{variable})"
+                replacement = (
+                    f"for (int32_t ordinal_{variable} = 0, {variable} = 0; "
+                    f"ordinal_{variable} < {extent} && "
+                    f"(({variable} = (vit_accumulator_order == 2 || "
+                    f"(vit_accumulator_order == 1 && {axis} == 0)) ? "
+                    f"{extent} - 1 - ordinal_{variable} : ordinal_{variable}), 1); "
+                    f"++ordinal_{variable})"
+                )
+                if source.count(original) != 1:
+                    raise ValueError("adapter dispatch changed; diagnostic order requires review")
+                source = source.replace(original, replacement)
+            source = prefix + source
         if case["family"] == "patch_embed":
             original = (
                 "  for (int p = 0; p < 196; ++p)\n"
@@ -106,12 +138,15 @@ def main():
             source = source.replace(original, replacement)
         write_if_changed(args.output / "adapter.c", source)
         return
-    config = configuration(case)
+    config = configuration(case, args.accumulator_validation, args.accumulator_round)
     header = (
         "/* Generated from kernel.py by tools/board_config.py. */\n"
         f'#define VIT_BOARD_CASE "{case["name"]}"\n'
         f'#define VIT_BOARD_EXPECTED_INVOCATIONS {config["expected_invocations"]}u\n'
         f'#define VIT_BOARD_EXPECTED_CHECKED {config["expected_checked"]}u\n'
+        + ("#define VIT_BOARD_ACCUMULATOR_VALIDATION 1\n"
+           f"#define VIT_BOARD_VALIDATION_ROUNDS {config['validation_rounds']}u\n"
+           f"#define VIT_BOARD_VALIDATION_FIRST_ROUND {config['validation_round_ids'][0]}u\n" if args.accumulator_validation else "")
     )
     source = ["/* Wrappers preserve the typed adapter's numerical body. */",
               '#include "board_support.h"', wrapper(case, True)]

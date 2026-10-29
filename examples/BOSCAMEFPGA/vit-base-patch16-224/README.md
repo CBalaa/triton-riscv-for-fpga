@@ -33,7 +33,7 @@ Each operator is independent:
 add_197x768/
     kernel.py       # Real @triton.jit body and literal KERNEL_CONFIG
     launch.c        # Independent int launch(void), input generation and oracle
-    makefile        # Compiler stages; board-enabled cases default to bin
+    makefile        # Compiler stages plus the default NH/E6 bin target
 ```
 
 The same layout applies to all 40 cases. Each `kernel.py` owns its shape,
@@ -60,6 +60,10 @@ alone does not establish that the composed patch projection works. Its
 complete execution is tracked separately from the emitted Linear chain.
 
 ## Build and simulate
+
+FPGA 编译默认在 SSA 层将有序 f32 求和改成顺序标量累加，最终 ELF 审计拒绝残留
+`vfredosum.vs`。仅硬件诊断使用 `make ALLOW_VECTOR_ORDERED_REDUCTIONS=1`；
+恢复 `=0` 无需 clean。详见[绕过说明](../../../buddy-mlir/examples/FPGA-BOSCAME/tools/README.scalar-ordered-reductions.md)。
 
 Activate the `boscame` conda environment configured in the repository README,
 then run from the repository root. The exporter locates the in-tree plugin; `BUDDY_OPT`,
@@ -132,19 +136,17 @@ kernel.ttir
 The `asm` stage includes the same fixed-register AME encoder and strict NR
 assembly restriction used by the standalone example, followed by RISC-V
 assembly to an object. It does not link a boot image or run the board.
-For board-enabled cases, `bin` links the NH/E6 board runtime described below.
+The explicit `bin` target links the NH/E6 board runtime described below.
 The `asm` stage alone does not execute or validate an operator.
 
 ## Build and run on FPGA
 
 Use the `boscame` conda environment and this repository's `buddy-mlir` checkout.
-The 22 operators marked PASS in [BOARD_RESULTS.md](BOARD_RESULTS.md) have
-default Make target `bin`; compiler and simulator targets remain available
-explicitly. Board build entries for the other 18 operators are not included
-in this checkpoint. The accepted `add_1x768` example retains its standalone
-board launcher and linker script. The other passing operators share
-`board.mk`, `board.ld` and `tools/board_support.c`, using the in-tree Buddy
-NH/E6 boot, PMP, cache, UART and DMA support.
+Each operator's default Make target is `bin`; compiler and simulator targets
+remain available explicitly. The accepted `add_1x768` example retains its
+standalone board launcher and linker script. Other examples share `board.mk`,
+`board.ld` and `tools/board_support.c`, using the in-tree Buddy NH/E6 boot,
+PMP, cache, UART and DMA support.
 
 ```bash
 conda activate boscame
@@ -167,18 +169,16 @@ python "$VIT/tools/run_board_suite.py" \
 ```
 
 The user-managed SSH tunnel is `ssh -N -L 18765:localhost:18765 fpga`.
-The user-provided `../run_bin.py` submits to its scheduler, which queues jobs
-and executes one operator at a time. The current execution deadline is 120 seconds, including
+`run_bin.py` submits to its scheduler, which queues jobs and executes one
+operator at a time. The current execution deadline is 120 seconds, including
 image load and CPU reset, with queue wait excluded. A deadline with UART
 output is reported as `TIMEOUT`; a deadline with no UART is `HANG`.
 
-`GOLDEN=1` embeds independent expected outputs for integer matmuls. The
-shared reference generator also handles floating-point linears, QK/PV
-attention and composed patch embedding; their board attempts remain
-unsuccessful as recorded in [BOARD_RESULTS.md](BOARD_RESULTS.md).
-`tools/board_golden.py` evaluates the original `launch.c` scalar expected
-formula on the host, retaining the original input initialization and
-tolerance. The board still runs the real typed adapter and compares every output against the embedded reference.
+`GOLDEN=1` is supported for integer matmuls, floating-point linears, QK/PV
+attention and the composed patch embedding. `tools/board_golden.py` evaluates
+the original `launch.c` scalar expected formula on the host, retaining the
+original input initialization and tolerance. The board still runs the real
+typed adapter and compares every output against the embedded reference.
 `golden_manifest.json` records provenance, coverage and hashes. These host
 reference checks alone do not establish board correctness. `GOLDEN=0`
 (the default) keeps the scalar oracle on the board.

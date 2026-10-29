@@ -19,7 +19,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from cases import describe, inventory
+from cases import describe, inventory  # noqa: E402
 
 
 def atomic_json(path, value):
@@ -31,6 +31,27 @@ def atomic_json(path, value):
 def snapshot_validation_evidence(image, build_dir, destination):
     """Recognize embedded references, including after GOLDEN mode changes."""
     record = {'validation_mode': 'on_board_scalar_oracle'}
+    accumulator = build_dir / 'accumulator-manifest.json'
+    if accumulator.exists():
+        manifest = json.loads(accumulator.read_text())
+        offset = 0x100000
+        matched = True
+        with image.open('rb') as binary:
+            for entry in manifest['rounds']:
+                golden = (build_dir / entry['file']).read_bytes()
+                binary.seek(offset)
+                matched &= (binary.read(len(golden)) == golden and
+                            hashlib.sha256(golden).hexdigest() == entry['output_sha256'])
+                offset = (offset + len(golden) + 63) & ~63
+        if matched:
+            shutil.copyfile(accumulator, destination / accumulator.name)
+            by_name = {entry['name']: entry for entry in manifest['rounds']}
+            round_ids = manifest.get('round_ids', [0, 1, 2])
+            return dict(validation_mode='accumulator_three_round_bit_exact',
+                        validation_tolerance=0,
+                        validation_round_ids=round_ids,
+                        expected_output_fnv64=[by_name['normal' if index == 0 else 'stress']['output_fnv64']
+                                              for index in round_ids])
     manifest_path = build_dir / 'golden_manifest.json'
     golden_path = build_dir / 'golden.bin'
     if not manifest_path.exists() or not golden_path.exists():
@@ -55,11 +76,44 @@ def snapshot_validation_evidence(image, build_dir, destination):
     return record
 
 
-def run_case(name, destination):
+def snapshot_build_evidence(kernels, name, destination):
+    """Keep generated route/code and linker inputs beside the submitted image."""
+    case = kernels / name
+    board = case / 'board'
+    files = {
+        filename: case / filename for filename in
+        ('kernel.planned.mlir', 'kernel.boscame.mlir', 'kernel.nr.s', 'kernel.o',
+         'frontend.json', '.compiler-inputs.json', 'build-result.json')
+    }
+    for filename in ('adapter.c', 'board_wrapper.c', 'board_config.json',
+                     'accumulator-launch.c', 'launch_board.c', 'board_launch.c',
+                     'launch.o', 'adapter.o', 'wrapper.o', name + '.elf', name + '.map'):
+        files['board-' + filename] = board / filename
+    for filename in ('identity-before.json', 'identity-after.json', 'frozen-tools.json',
+                     'images.json', 'build-validation.json'):
+        files[filename] = kernels.parent / filename
+    snapshot = kernels.parent / 'source-snapshot'
+    if snapshot.is_dir():
+        for path in snapshot.iterdir():
+            if path.is_file():
+                files['source-snapshot-' + path.name] = path
+    evidence = destination / 'build-evidence'
+    evidence.mkdir(exist_ok=True)
+    hashes = {}
+    for label, original in files.items():
+        if original.is_file():
+            shutil.copyfile(original, evidence / label)
+            hashes[label] = hashlib.sha256((evidence / label).read_bytes()).hexdigest()
+    atomic_json(evidence / 'sha256.json', hashes)
+    return hashes
+
+
+def run_case(name, destination, kernels=None):
     from fpga_scheduler import Client
     case_dir = destination / name
     case_dir.mkdir(parents=True, exist_ok=True)
-    original = ROOT / 'build/kernels' / name / 'board' / (name + '.bin')
+    kernels = Path(kernels).resolve() if kernels is not None else ROOT / 'build/kernels'
+    original = kernels / name / 'board' / (name + '.bin')
     record = dict(case=name, status='BUILD_MISSING', kernel_cycles=[],
                   started_utc=datetime.now(timezone.utc).isoformat())
     if not original.is_file():
@@ -68,6 +122,7 @@ def run_case(name, destination):
     image = case_dir / (name + '.bin')
     shutil.copyfile(original, image)
     record['image_sha256'] = hashlib.sha256(image.read_bytes()).hexdigest()
+    record['build_evidence_sha256'] = snapshot_build_evidence(kernels, name, case_dir)
     config = original.parent / 'board_config.json'
     record['board_config'] = json.loads(config.read_text()) if config.exists() else {
         'expected_invocations': 1, 'expected_checked': 768,
@@ -87,7 +142,8 @@ def run_case(name, destination):
                                    text=True, bufsize=1)
         for line in process.stdout:
             lines.append(line)
-            log.write(line); log.flush()
+            log.write(line)
+            log.flush()
             events.write(json.dumps(dict(seconds=time.monotonic() - started, text=line)) + '\n')
             events.flush()
             print(name + ': ' + line.rstrip(), flush=True)
@@ -108,6 +164,10 @@ def run_case(name, destination):
         (case_dir / 'uart.log').write_text(uart)
         assert result.details.get('image_sha256') == record['image_sha256'], 'submitted image hash mismatch'
         record['kernel_cycles'] = [int(x, 16) for x in re.findall(r'kernel_cycles=0x([0-9a-fA-F]+)', uart)]
+        rounds = re.findall(r'validation_round=(\d+) checked=(\d+) errors=(\d+) guard_errors=(\d+) input_errors=(\d+) output_fnv64=0x([0-9a-fA-F]+)', uart)
+        record['validation_rounds'] = [dict(round=int(r[0]), checked=int(r[1]), errors=int(r[2]),
+                                           guard_errors=int(r[3]), input_errors=int(r[4]),
+                                           output_fnv64=r[5].lower().zfill(16)) for r in rounds]
         check = re.search(r'kernel_returned=(\d+)(?: validation_executed=(\d+))? checked=(\d+) errors=(\d+) max_abs_error_f32_bits=0x([0-9a-fA-F]+)', uart)
         if check:
             record.update(kernel_returned=int(check[1]), validation_executed=int(check[2] or 1),
@@ -122,7 +182,19 @@ def run_case(name, destination):
         elif result.ok and result.execution_status == 'exited' and result.app_exit_code == 0:
             complete = (record.get('validation_executed') == 1 and record.get('errors') == 0 and
                         record.get('checked') == expected['expected_checked'] and
+                        record.get('kernel_returned') == expected['expected_invocations'] and
                         len(record['kernel_cycles']) == expected['expected_invocations'])
+            if expected.get('validation_mode') == 'accumulator_three_round_bit_exact':
+                expected_ids = expected.get('validation_round_ids', [0, 1, 2])
+                expected_hashes = record.get('expected_output_fnv64', [])
+                complete &= (record['validation_mode'] == expected['validation_mode'] and
+                             record.get('validation_round_ids') == expected_ids and
+                             [r['round'] for r in record['validation_rounds']] == expected_ids and
+                             len(expected_hashes) == len(expected_ids))
+                for validation, expected_hash in zip(record['validation_rounds'], expected_hashes):
+                    complete &= (validation['checked'] == expected['expected_checked_per_round'] and
+                                 validation['errors'] == validation['guard_errors'] == validation['input_errors'] == 0 and
+                                 validation['output_fnv64'] == expected_hash)
             record['status'] = 'PASS' if complete else 'INCOMPLETE_EVIDENCE'
         elif result.execution_status == 'exited':
             record['status'] = 'FAIL'
@@ -140,7 +212,8 @@ def write_report(destination):
     records = [json.loads(p.read_text()) for p in sorted(destination.glob('*/result.json'))]
     counts = {}
     for record in records:
-        status = record['status']; counts[status] = counts.get(status, 0) + 1
+        status = record['status']
+        counts[status] = counts.get(status, 0) + 1
     atomic_json(destination / 'report.json', dict(counts=counts, operators=records))
     lines = ['# ViT FPGA operator board results', '',
              'Execution: user-provided `run_bin.py`, sequential submissions; timeout=120 seconds.',
@@ -162,13 +235,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--case', action='append')
     parser.add_argument('--report-dir', type=Path, required=True)
+    parser.add_argument('--kernels', type=Path, default=ROOT / 'build/kernels',
+                        help='Use binaries from this fresh build root')
     parser.add_argument('--collect', action='store_true')
     args = parser.parse_args()
-    destination = args.report_dir.resolve(); destination.mkdir(parents=True, exist_ok=True)
+    destination = args.report_dir.resolve()
+    destination.mkdir(parents=True, exist_ok=True)
     if not args.collect:
         for name in args.case or [c['name'] for c in inventory()]:
             describe(name)
-            run_case(name, destination)
+            run_case(name, destination, args.kernels)
             write_report(destination)
     write_report(destination)
 

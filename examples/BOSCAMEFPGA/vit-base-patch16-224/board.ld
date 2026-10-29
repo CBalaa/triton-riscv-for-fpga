@@ -28,6 +28,10 @@ SECTIONS {
     . = ALIGN(64);
     __dma_scratch_end = .;
   } > RAM
+  .bosc_ame_private_ddr (NOLOAD) : {
+    . = ALIGN(64); __bosc_ame_private_ddr_start = .;
+    . += 256K; __bosc_ame_private_ddr_end = .;
+  } > RAM
   .e6_stack 0x81900000 (NOLOAD) : {
     __e6_stack_bottom = .; . += 128K; __e6_stack_top = .;
   } > RAM
@@ -39,5 +43,6 @@ SECTIONS {
   ASSERT(e6_start == 0x80010000, "E6 entry moved")
   ASSERT(__bss_end <= __nh_stack_bottom, "image overlaps NH stack")
   ASSERT(__dma_scratch_end <= __e6_stack_bottom, "operands exceed PMP DDR window")
+  ASSERT(__bosc_ame_private_ddr_end <= __e6_stack_bottom, "private frames exceed PMP DDR window")
   ASSERT(_end <= ORIGIN(RAM) + LENGTH(RAM), "image exceeds DDR allocation")
 }

@@ -334,6 +334,9 @@ def simulate_case(
         if machines is not None:
             machines[machine_key] = machine
     access_start, dma_start = len(machine.accesses), len(machine.dma_log)
+    frame_start = len(getattr(machine, "frame_accesses", []))
+    ame_frame_start = len(getattr(machine, "ame_frame_accesses", []))
+    frame_log_start = len(getattr(machine, "frame_log", []))
     grid = case["grid"]
     programs = list(itertools.product(*(range(extent) for extent in grid)))
     if selected_programs is not None:
@@ -436,6 +439,27 @@ def simulate_case(
         for name, _, _, action in machine.accesses[access_start:]
     ):
         raise AssertionError("overwrite matmul read old external C")
+    private_frames = {frame["name"]: frame for frame in getattr(machine, "private_frames", [])}
+    frame_events = getattr(machine, "frame_log", [])[frame_log_start:]
+    acquired = [event[1] for event in frame_events if event[0] == "acquire"]
+    released = [event[1] for event in frame_events if event[0] == "release"]
+    if len(set(acquired)) != len(acquired) or sorted(acquired) != sorted(released):
+        raise AssertionError("private DDR frames lack matching invocation releases")
+    for name in acquired:
+        if name not in private_frames or private_frames[name]["alive"]:
+            raise AssertionError("private DDR frame remains live after invocation")
+    frame_bytes = {kind: 0 for kind in ("read", "write")}
+    ame_frame_bytes = dict(frame_bytes)
+    for accesses, counts in (
+        (getattr(machine, "frame_accesses", [])[frame_start:], frame_bytes),
+        (getattr(machine, "ame_frame_accesses", [])[ame_frame_start:], ame_frame_bytes),
+    ):
+        for name, start, end, action in accesses:
+            frame = private_frames.get(name)
+            if (frame is None or name not in acquired or action not in counts
+                    or not frame["begin"] <= start < end <= frame["end"]):
+                raise AssertionError("private DDR access outside invocation frame")
+            counts[action] += end - start
     comparison_actual, comparison_expected = actual, expected
     nonlinear_metrics = None
     if case["family"] == "attention_pv":
@@ -461,6 +485,22 @@ def simulate_case(
         "order": order,
         "ddr_accesses": len(machine.accesses) - access_start,
         "dma_transfers": len(machine.dma_log) - dma_start,
+        "private_ddr": {
+            "frames_acquired": len(acquired),
+            "frames_released": len(released),
+            "frame_bytes": frame_bytes,
+            "ame_bytes": ame_frame_bytes,
+            "poison": getattr(machine, "private_poison", None),
+        },
+        "argument_bytes": {
+            argument["name"]: {
+                action: sum(end - start for name, start, end, kind
+                            in machine.accesses[access_start:]
+                            if name == f"%arg{index}" and kind == action)
+                for action in ("read", "write")
+            }
+            for index, argument in enumerate(case["arguments"])
+        },
         "output_sha256": {
             name: hashlib.sha256(comparison_actual[name].tobytes()).hexdigest()
             for name in comparison_expected
@@ -808,7 +848,11 @@ def check_case(case, output_root):
         record["total_programs"] *= len(scenarios)
         record["comparison_rounds"] = len(scenarios)
         runs = []
-        machines = {} if case["family"] == "attention_pv" else None
+        machines = (
+            {}
+            if case["family"] in ("attention_pv", "matmul_i8", "matmul_i8_overwrite")
+            else None
+        )
         for name, stress, order in scenarios:
             arrays = make_inputs(case, argument_shapes(case), stress=stress)
             _, metrics = simulate_case(
