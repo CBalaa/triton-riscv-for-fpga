@@ -17,7 +17,7 @@ def matmul_i8(
     BK: tl.constexpr,
     VALID_M: tl.constexpr,
 ):
-    """Signed INT8 C[M,N] += A[M,K] @ B[N,K]^T.
+    """Signed INT8 C[M,N] = A[M,K] @ B[N,K]^T.
 
     M and VALID_M are the logical row count. Masked loads zero-pad each
     fixed-size AME tile internally; callers provide no padded DDR buffers.
@@ -35,8 +35,8 @@ def matmul_i8(
         acc = tl.dot(a, b, acc, input_precision="ieee")
     valid = (rows[:, None] < VALID_M) & (cols[None, :] < N)
     address = C + rows[:, None] * N + cols[None, :]
-    previous = tl.load(address, valid, other=0)
-    tl.store(address, acc + previous, valid)
+    # The zero initial value is part of this compiled kernel, not a caller promise.
+    tl.store(address, acc, valid)
 
 
 # Fixed specialization; cases.py reads this literal without importing Triton.
@@ -51,6 +51,7 @@ KERNEL_CONFIG = {
     "shape": [196, 768, 768],
     "constexprs": {"M": 196, "VALID_M": 196, "N": 768, "K": 768, "BM": 32, "BN": 64, "BK": 128},
     "grid": [7, 12, 1],
-    "roles": [],
+    "roles": ["model_pure_product"],
+    "accumulation": "overwrite",
     "metadata": {"dtype": "i8 x i8 -> i32", "target": "nr-fpga", "checked_elements": 150528},
 }

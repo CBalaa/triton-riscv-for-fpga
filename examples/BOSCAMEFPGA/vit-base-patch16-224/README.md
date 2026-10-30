@@ -5,25 +5,41 @@ API to verified standard Contract IR plus a manifest. Buddy owns planning and
 all subsequent stages. Set `TRITON_SHARED_OPT_PATH`, use explicit Buddy tool
 variables or PATH, set `BUDDY_ROOT` for backend filters and simulators, and see the [handoff guide](../../../docs/BoscameAOT.md).
 
-This ports `google/vit-base-patch16-224` from the upstream
-`CBalaa/buddy-mlir-for-fpga` branch `vit-base-patch16-224`, commit
-`478766cfddb11e61560c44d68320ee21279b90ae`. It retains all 34 fixed-shape
-Triton specializations and the 12-block model capture/replacement sources,
-with five additional overwrite matmuls and a weight-quantization check.
+This ports `google/vit-base-patch16-224` from upstream
+`CBalaa/buddy-mlir-for-fpga`, commit
+`478766cfddb11e61560c44d68320ee21279b90ae`. Production matrix multiplication
+uses quantization, signed i8 AME matmul (overwrite) and dequantization for patch
+projection, every dense Linear, and QK/PV attention. The five standalone FP32
+Linear entries are retired. The current inventory has 43 entries, including
+10 new attention/layout primitives and the retained integer matrix examples.
 
-**A fresh complete-inventory build passes all 40 entries through restricted
-target assembly and object generation.** All 418 kernel artifacts from the
-previously supported 38 cases retain their SHA256 values. GELU and Softmax pass three
-complete-grid strict-simulator rounds: 21276 programs and 3212676 output
-comparisons. Their explicit approximation contracts retain the existing
-`rtol=atol=2e-5`; the source algorithms remain unchanged. The emitted W8A8
-classifier Linear chain passes four numerical stress rounds, and PV passes
-three complete grids (1872 programs, 453888 bit-exact f32 outputs).
-W8A8 dense linears are the default model path;
-complete-model execution and accuracy remain unverified. See [VALIDATION.md](VALIDATION.md)
-for the exact cases, diagnostics and numerical evidence. Individual NH/E6
-operator board runs are recorded separately in [BOARD_RESULTS.md](BOARD_RESULTS.md);
-operator success does not establish complete-model execution or accuracy.
+QK/PV retain their model f32 shapes and layouts. Model replacement expands
+each batch matmul into explicit two-dimensional primitive calls: left
+quantization, runtime right quantization with transpose, overwrite i8 matmul,
+and dequantization. Each of the 12 heads has four calls. Compiled pack/unpack
+primitives stage the 197×197 heads at 64-byte-aligned addresses. There are no
+standalone QK/PV cases or attention composition configurations.
+[MODEL.md](MODEL.md) records exact routing and scale/layout contracts.
+The project naming convention is `gemm_i8_*` for `C = old C + A @ B.T`
+and `matmul_i8_*` for `C = A @ B.T`. Both use physical `B[N,K]` storage;
+production quantized chains use the overwrite `matmul_i8_*` family.
+QK applies 0.125 once in `dequantize_197x197`; PV applies no extra factor.
+[ATTENTION_PRIMITIVE_MODEL.md](ATTENTION_PRIMITIVE_MODEL.md) preserves historical
+local graph-validation evidence. [DIRECT_ATTENTION.md](DIRECT_ATTENTION.md) preserves the
+superseded fusion experiment; its compiler extensions have been withdrawn.
+[OPERATOR_NAMING.md](OPERATOR_NAMING.md) preserves the earlier
+naming migration and the validation of the former composition;
+[OPERATOR_NAMING_MAP.json](OPERATOR_NAMING_MAP.json) gives the machine-readable
+old-to-new map. Historical records retain their original names and hashes.
+Complete-model execution and accuracy remain unverified. [VALIDATION.md](VALIDATION.md)
+and [BOARD_RESULTS.md](BOARD_RESULTS.md) retain historical evidence, which must
+be interpreted against the archived sources and images. New operator/chain
+success does not establish complete-model execution or accuracy.
+
+The current cleanup prepares the complete standalone inventory for later
+operator verification. It checks inventory, dependencies, references, Python
+syntax and diffs only; it establishes no new numerical or FPGA result. The
+commands below document the retained workflows for subsequent work.
 
 ## Directory layout
 
@@ -36,7 +52,7 @@ add_197x768/
     makefile        # Compiler stages plus the default NH/E6 bin target
 ```
 
-The same layout applies to all 40 cases. Each `kernel.py` owns its shape,
+The same layout applies to all 43 entries. Each `kernel.py` owns its shape,
 arguments, constexprs (including tile sizes), launch grid and numerical
 contracts in `KERNEL_CONFIG`. Keep this dictionary a Python literal:
 `cases.py` reads it with `ast.literal_eval`, so enumerating cases needs neither
@@ -51,7 +67,7 @@ The generated typed descriptor adapter follows the standalone
 `../matmul_i8_128x1024x128` example: fixed shape/stride, 64-byte alignment,
 nonalias/overflow checks, rank-one unranked descriptors, and a complete
 three-dimensional program-grid loop. Offsets and lengths use elements.
-Both i8 and f32 linear B operands have physical `[N,K]` storage.
+Both i8 families' B operands have physical `[N,K]` storage for `A @ B^T`.
 
 `patch_embed_196x768/kernel.py` performs im2col. Its **public adapter** retains
 the upstream composition: im2col, activation/weight quantization, i8 matmul,
@@ -76,8 +92,8 @@ export BUDDY_ROOT="$PWD/buddy-mlir"
 VIT=examples/BOSCAMEFPGA/vit-base-patch16-224
 
 # One independently launchable operator:
-make -C "$VIT/matmul_i8_197x768x768" PYTHON=python3
-make -C "$VIT/matmul_i8_197x768x768" simcheck PYTHON=python3
+make -C "$VIT/gemm_i8_197x768x768" PYTHON=python3
+make -C "$VIT/gemm_i8_197x768x768" simcheck PYTHON=python3
 
 # Attempt every operator, recording failures and continuing to the next:
 make -C "$VIT" asm PYTHON=python3
@@ -159,25 +175,26 @@ python examples/BOSCAMEFPGA/run_bin.py \
   "$VIT/build/kernels/add_197x768/board/add_197x768.bin"
 
 # Avoid recomputing an expensive scalar reference on the FPGA.
-make -C "$VIT/matmul_i8_197x768x768" bin GOLDEN=1
+make -C "$VIT/gemm_i8_197x768x768" bin GOLDEN=1
 python examples/BOSCAMEFPGA/run_bin.py \
-  "$VIT/build/kernels/matmul_i8_197x768x768/board/matmul_i8_197x768x768.bin"
+  "$VIT/build/kernels/gemm_i8_197x768x768/board/gemm_i8_197x768x768.bin"
 
 # Submit existing images one at a time and preserve evidence.
 python "$VIT/tools/run_board_suite.py" \
   --case add_197x768 --report-dir "$VIT/build/board-runs/manual"
 ```
 
-The user-managed SSH tunnel is `ssh -N -L 18765:localhost:18765 fpga`.
+The user-managed SSH tunnel is `ssh -N -L 18765:localhost:18765 fpga113`.
 `run_bin.py` submits to its scheduler, which queues jobs and executes one
 operator at a time. The current execution deadline is 120 seconds, including
 image load and CPU reset, with queue wait excluded. A deadline with UART
 output is reported as `TIMEOUT`; a deadline with no UART is `HANG`.
 
-`GOLDEN=1` is supported for integer matmuls, floating-point linears, QK/PV
-attention and the composed patch embedding. `tools/board_golden.py` evaluates
-the original `launch.c` scalar expected formula on the host, retaining the
-original input initialization and tolerance. The board still runs the real
+`GOLDEN=1` is supported for integer matmuls and
+the composed patch embedding. `tools/board_golden.py` evaluates the independent
+`launch.c` expected algorithm on the host, retaining input initialization and
+tolerance. The retained attention reference helpers distinguish quantized
+arithmetic from the independent host FP32 baseline. The board runs the real
 typed adapter and compares every output against the embedded reference.
 `golden_manifest.json` records provenance, coverage and hashes. These host
 reference checks alone do not establish board correctness. `GOLDEN=0`
@@ -203,9 +220,21 @@ mock raw entries and explicitly do **not** validate numerical results.
 
 ## Model and numerical boundaries
 
+[Quantized production validation](QUANTIZED_ATTENTION_VALIDATION.md) preserves
+the pre-rename deletions, additions, source-graph routing, AME evidence,
+strict simulation, quantization error and incomplete FPGA coverage under its
+original names. The [saved per-operator table](build/operator-naming-20261029/all-operators-validation.md)
+and [naming migration report](OPERATOR_NAMING.md) separately record the new
+artifacts and regression results. Historical board success is not counted as
+execution of a newly named image.
+`make operatorcheck KERNELS=/absolute/evidence/kernels REPORT_DIR=/absolute/evidence`
+rechecks saved evidence without building, simulating or submitting board jobs.
+
 [model/README.md](model/README.md) documents the pinned model assets and graph
-capture/replacement commands. W8A8 is the default; `MODE=fp32` selects the
-explicit dense floating-point reference. The patch composition remains W8A8. The model gate requires the current operator
+capture/replacement commands. FPGA production supports only W8A8 matrix
+products, including QK/PV. `MODE=fp32` and FPGA reference replacement are
+disabled; `compare_accuracy.py reference` retains the independent host FP32
+baseline. The model gate requires the current operator
 artifacts and complete simulation evidence; host graph execution is not a
 substitute for BOSCAME simulation. Full-model validation is skipped while required operators or assets are
 missing. The new `tools/check_w8a8_chain.py` validates an emitted quantization

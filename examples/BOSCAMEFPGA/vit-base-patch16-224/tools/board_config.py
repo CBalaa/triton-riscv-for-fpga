@@ -14,26 +14,28 @@ from cases import describe  # noqa: E402
 
 PATCH_DEPENDENCIES = (
     "quantize_196x768", "quantize_768x768",
-    "matmul_i8_overwrite_196x768x768", "dequantize_196x768",
+    "matmul_i8_196x768x768", "dequantize_196x768",
 )
 
 
 def dependencies(case):
-    return PATCH_DEPENDENCIES if case["family"] == "patch_embed" else ()
+    return tuple(case.get("dependencies", ())) or (PATCH_DEPENDENCIES if case["family"] == "patch_embed" else ())
 
 
 def configuration(case, accumulator_validation=False, accumulator_round=None):
     family, shape = case["family"], case["shape"]
-    if accumulator_validation and family not in ("matmul_i8", "matmul_i8_overwrite"):
+    if accumulator_validation and family not in ("gemm_i8", "matmul_i8"):
         raise ValueError("accumulator diagnostic requires an integer matmul")
     round_ids = ([accumulator_round] if accumulator_round is not None else [0, 1, 2])
     trials = len(round_ids) if accumulator_validation else 2 if family == "per_token_quantization" else 1
-    if family in ("linear", "matmul_i8", "matmul_i8_overwrite"):
+    if family in ("linear", "gemm_i8", "matmul_i8"):
         checked = shape[0] * shape[1] * trials
-    elif family.startswith("attention_"):
-        checked = math.prod(shape[:3])
     elif family == "patch_embed":
         checked = 196 * 768
+    elif family == "quantize_transpose":
+        checked = math.prod(shape) + shape[1]
+    elif family == "head_layout":
+        checked = math.prod(shape)
     elif family == "per_token_quantization":
         checked = trials * (math.prod(shape) + shape[0])
     else:

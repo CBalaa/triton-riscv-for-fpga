@@ -1,3 +1,11 @@
+> Historical checkpoints below preserve their original case counts and results.
+> The current quantized production inventory and matrix routing contract are in
+> [MODEL.md](MODEL.md). Archived FP32 Linear/QK/PV results do not validate their
+> replacement quantized implementations.
+> The current 45-operator results are in
+> [QUANTIZED_ATTENTION_VALIDATION.md](QUANTIZED_ATTENTION_VALIDATION.md)
+> and the [per-operator table](build/quantized-attention-20261029/all-operators-validation.md).
+
 # Port validation, 2026-10-26
 
 Upstream source: `CBalaa/buddy-mlir-for-fpga`, branch
@@ -236,21 +244,23 @@ diagnostic.
 | gelu_197x3072 | Frontend V25: generic requires one pure arithmetic operation (`math.erf`) | Exact erf needs an explicit mathematical/target implementation; a different approximation changes numerics. |
 | softmax_12x197x197 | Frontend V25: generic requires one pure arithmetic operation (`math.exp`) | Exp and max reduction need target recipes, including NaN/Inf and invalid-lane -Inf semantics, with the original sum/division order preserved. |
 
-The five ordinary FP32 linears are `linear_196x768x768`,
+The five historical FP32 Linear entries, now retired from production and
+removed from the current inventory, were `linear_196x768x768`,
 `linear_197x3072x768`, `linear_197x768x3072`,
-`linear_197x768x768` and `linear_1x1000x768`. The four dequantizers
-are `dequantize_196x768`, `dequantize_197x3072`,
-`dequantize_197x768` and `dequantize_1x1000`. The five quantizers
-are `quantize_196x768`, `quantize_197x3072`, `quantize_197x768`,
+`linear_197x768x768` and `linear_1x1000x768`. At that checkpoint the four dequantizers
+were `dequantize_196x768`, `dequantize_197x3072`,
+`dequantize_197x768` and `dequantize_1x1000`. The five quantizers at that checkpoint
+were `quantize_196x768`, `quantize_197x3072`, `quantize_197x768`,
 `quantize_1x768` and `quantize_768x768`.
 
 These are first blockers, not a guarantee that resolving each one alone
 completes the case. Max reduction and new math operations still need
 verified target recipes; external boundary-copy support does not add those
-computational semantics. FP32 matmul already has a scalar, ordered-mnk
-route with preserved floating-point policy, used by the now-compiling QK.
-At that checkpoint the remaining linear restriction was loop invariant
-capture; the current FP32 linears compile through object generation.
+computational semantics. At that historical checkpoint, FP32 matmul used a
+scalar, ordered-mnk route and QK compiled through it. The remaining Linear
+restriction was loop invariant capture and was later resolved. Those FP32
+Linear executable cases have since been removed, and production QK/PV now
+use quantized AME compositions; the scalar route is not a model fallback.
 
 For V19, the zero initializer is copied into the loop-carried accumulator,
 and independently copied into a temporary product on each iteration.
@@ -388,9 +398,10 @@ No unrelated files are formatted, and no files are staged or committed.
 
 ## W8A8 and zero-initialized model products
 
-The model replacement and prerequisite gate now default to W8A8 dense
-linears. `--fp32-reference` / `--mode fp32` retain the explicit floating-point
-dense path; its patch projection remains the original quantized composition.
+The following is historical evidence from the earlier W8A8 dense checkpoint.
+The current FPGA path requires W8A8 for patch, dense and attention products;
+the former FPGA FP32-reference modes and five executable FP32 Linear cases
+have been retired. The host-only FP32 baseline remains available.
 The original 34-case checkpoint above precedes this change. Five dedicated
 `matmul_i8_overwrite_*` entries and `quantize_1000x768` bring the inventory to
 40; they do not replace the independent nonzero-C `matmul_i8_*` tests.

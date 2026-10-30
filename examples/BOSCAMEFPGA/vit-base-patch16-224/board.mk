@@ -14,8 +14,9 @@ BOARD_GENERATOR := $(VIT_ROOT)/tools/board_config.py
 BOARD_SUPPORT := $(VIT_ROOT)/tools/board_support.c
 BOARD_HEADER := $(VIT_ROOT)/tools/board_support.h
 BOARD_DEP_CASES := $(shell $(PYTHON) -B $(BOARD_GENERATOR) --case $(CASE) --dependencies)
-BOARD_BUILD_INPUTS := $(VIT_ROOT)/board.mk $(VIT_ROOT)/board.ld $(CURDIR)/makefile
-BOARD_LINK_SCRIPT := $(VIT_ROOT)/board.ld
+BOARD_LINK_SCRIPT ?= $(VIT_ROOT)/board.ld
+BOARD_BUILD_INPUTS := $(VIT_ROOT)/board.mk $(BOARD_LINK_SCRIPT) $(CURDIR)/makefile \
+  $(VIT_ROOT)/tools/attention_reference.h $(VIT_ROOT)/tools/launch_checks.h
 GOLDEN ?= 0
 ACCUMULATOR_VALIDATION ?= 0
 ACCUMULATOR_ROUND ?= all

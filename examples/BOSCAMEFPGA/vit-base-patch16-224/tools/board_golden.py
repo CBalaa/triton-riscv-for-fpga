@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract the original independent HOST_TEST launch oracle, never a kernel.
+"""Extract the independent HOST_TEST launch oracle, never a kernel.
 
 The only launch transformation redirects original expected comparisons into
 output writes.  The typed kernel adapter is a deliberate no-op that records
@@ -26,6 +26,15 @@ from cases import describe
 
 def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def c_float(value):
+    """Emit a valid C float literal, including exact zero tolerances."""
+    result = f'{value:.9g}'
+    if '.' not in result and 'e' not in result.lower():
+        result += '.0'
+    return result + 'f'
+
 
 
 def remove_compare(source):
@@ -169,8 +178,7 @@ def generate(name, dest, compiler):
     if sys.byteorder != 'little':
         raise ValueError('host golden generation requires little-endian f32/i32 storage')
     case = describe(name)
-    if case['family'] not in ('linear', 'matmul_i8', 'matmul_i8_overwrite',
-                              'attention_pv', 'attention_qk', 'patch_embed'):
+    if case['family'] not in ('gemm_i8', 'matmul_i8', 'patch_embed'):
         raise ValueError('unsupported family: ' + case['family'])
     dest = dest.resolve()
     dest.mkdir(parents=True, exist_ok=True)
@@ -228,8 +236,9 @@ def generate(name, dest, compiler):
         raise ValueError('nonfinite independent expected output: ' + name)
     output['file'] = 'golden.bin'
     output['sha256'] = sha256(dest / output['file'])
+    exact = dtype == 'i32' or (capture['atol'] == 0 and capture['rtol'] == 0)
     output['tolerance'] = {'atol': capture['atol'], 'rtol': capture['rtol'],
-                           'comparison': 'exact' if dtype == 'i32' else 'abs(actual-expected) <= atol + rtol*abs(expected)'}
+                           'comparison': 'exact' if exact else 'abs(actual-expected) <= atol + rtol*abs(expected)'}
     for arg in capture['arguments']:
         kind = 'initial' if arg['output'] else 'input'
         arg['initial_file'] = f'round-000.{arg["name"]}.{kind}.bin'
@@ -238,7 +247,7 @@ def generate(name, dest, compiler):
         'version': 1, 'case': name, 'source': str(source_path),
         'source_sha256': sha256(source_path), 'kernel_source_sha256': sha256(Path(case['kernel_source'])),
         'configuration_sha256': hashlib.sha256(json.dumps(case, sort_keys=True).encode()).hexdigest(),
-        'oracle': 'Original launch.c HOST_TEST C scalar expected formula; adapter deliberately no-op; no kernel/simulator is linked',
+        'oracle': 'Independent launch.c HOST_TEST C scalar expected formula; adapter deliberately no-op; no kernel/simulator is linked',
         'status': 'reference_generated_only_not_board_validated',
         'host_compile_command': command, 'host_oracle_seconds': elapsed,
         'round_count': 1,
@@ -282,9 +291,18 @@ def generate(name, dest, compiler):
         board += f'''    float difference = got - want;
     if (difference < 0) difference = -difference;
     if (difference > maximum) maximum = difference;
-    if (!check_close(got, want, {at:.9g}f, {rt:.9g}f)) ++errors;
+    if (!check_close(got, want, {c_float(at)}, {c_float(rt)})) ++errors;
 '''
-    board += f'''  }}
+    board += '  }\n'
+    postchecks = re.findall(r'/\* VIT_GOLDEN_POSTCHECK_BEGIN \*/(.*?)/\* VIT_GOLDEN_POSTCHECK_END \*/', original, re.S)
+    if len(postchecks) > 1:
+        raise ValueError('unexpected multiple golden postcheck regions: ' + name)
+    if postchecks:
+        # Preserve original guard/input checks around the inexpensive output
+        # comparison. Only the expensive numeric oracle is replaced by a blob.
+        board += postchecks[0]
+        manifest['validation']['original_guard_and_input_postchecks_preserved'] = True
+    board += f'''
   return print_check("{name}", errors, maximum);
 }}
 '''
@@ -297,15 +315,17 @@ def generate(name, dest, compiler):
         f'.incbin "{dest / output["file"]}"\n'
         '.size vit_golden_values, .-vit_golden_values\n'
         '.section .note.GNU-stack,"",@progbits\n')
-    verify_board_fixture(case, dest, capture, compiler)
+    verify_board_fixture(case, dest, capture, compiler, bool(postchecks))
     manifest['validation']['board_initialization_matches_original_fixture'] = True
     manifest['validation']['board_comparison_accepts_expected_and_rejects_corruption'] = True
+    if postchecks:
+        manifest['validation']['board_postchecks_reject_input_and_guard_corruption'] = True
     (dest / 'golden_manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'{name}: {output["elements"]} values, {output["bytes"]} bytes, host oracle {elapsed:.3f}s', flush=True)
     return manifest
 
 
-def verify_board_fixture(case, dest, capture, compiler):
+def verify_board_fixture(case, dest, capture, compiler, postchecks=False):
     """Replay generated board initialization, then inject reference or corruption.
 
     This tests fixture preservation and checker behavior only. It deliberately
@@ -335,9 +355,11 @@ def verify_board_fixture(case, dest, capture, compiler):
         lines += [f'  fixture({fixture_path}, a{i}->aligned, {arg["bytes"]});']
     last = len(capture['arguments']) - 1
     lines += [f'  memcpy(a{last}->aligned, vit_golden_values, {output["bytes"]});',
-              f'  if (getenv("VIT_GOLDEN_CORRUPT")) (({ctype} *)a{last}->aligned)[0] += 1;',
-              '}', 'int launch(void);',
-              'int main(void) { return launch(); }']
+              f'  if (getenv("VIT_GOLDEN_CORRUPT")) (({ctype} *)a{last}->aligned)[0] += 1;']
+    if postchecks:
+        lines += ['  if (getenv("VIT_GOLDEN_CORRUPT_INPUT")) ((unsigned char *)a0->aligned)[0] ^= 1;',
+                  '  if (getenv("VIT_GOLDEN_CORRUPT_GUARD")) ((unsigned char *)a0->aligned)[-1] ^= 1;']
+    lines += ['}', 'int launch(void);', 'int main(void) { return launch(); }']
     harness = dest / 'fixture-check.c'
     harness.write_text('\n'.join(lines) + '\n')
     # A tiny assembly incbin is shared by host and RISC-V and carries the
@@ -360,7 +382,16 @@ def verify_board_fixture(case, dest, capture, compiler):
     rejected = subprocess.run([str(dest / 'fixture-check')], env=env, capture_output=True, text=True)
     if rejected.returncode != 1 or ': FAIL errors=00000001' not in rejected.stdout:
         raise ValueError('generated board checker failed corruption test: ' + rejected.stdout + rejected.stderr)
-    (dest / 'fixture-check.log').write_text(accepted.stdout + rejected.stdout)
+    logs = accepted.stdout + rejected.stdout
+    if postchecks:
+        for kind in ('INPUT', 'GUARD'):
+            rejected = subprocess.run([str(dest / 'fixture-check')],
+                env=dict(os.environ, **{f'VIT_GOLDEN_CORRUPT_{kind}': '1'}),
+                capture_output=True, text=True)
+            if rejected.returncode != 1 or ': FAIL errors=00000001' not in rejected.stdout:
+                raise ValueError(f'generated board checker failed {kind.lower()} corruption test: ' + rejected.stdout + rejected.stderr)
+            logs += rejected.stdout
+    (dest / 'fixture-check.log').write_text(logs)
 
 
 def main():

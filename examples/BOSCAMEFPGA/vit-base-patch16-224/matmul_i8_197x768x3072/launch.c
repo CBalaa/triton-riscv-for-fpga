@@ -2,8 +2,9 @@
 #define M 197
 #define N 768
 #define K 3072
-extern void _mlir_ciface_kernel_matmul_i8_197x768x3072(MemRef2 *, MemRef2 *,
-                                                       MemRef2 *);
+extern void _mlir_ciface_kernel_matmul_i8_197x768x3072(MemRef2 *,
+                                                                 MemRef2 *,
+                                                                 MemRef2 *);
 int launch(void) {
   int8_t *a = workspace(0), *b = workspace((size_t)M * K + 64);
   int32_t *c = workspace((size_t)M * K + (size_t)N * K + 128);
@@ -29,7 +30,7 @@ int launch(void) {
   int32_t max_error = 0;
   for (int i = 0; i < M; i++)
     for (int j = 0; j < N; j++) {
-      int32_t want = (i * 3 + j) % 7 - 3;
+      int32_t want = 0;
       for (int q = 0; q < K; q++)
         want += (int32_t)a[(size_t)i * K + q] * (int32_t)b[(size_t)j * K + q];
       int32_t got = c[(size_t)i * N + j], dlt = got - want;
@@ -48,5 +49,6 @@ int launch(void) {
         errors++;
       }
     }
-  return print_check("matmul_i8_197x768x3072", errors, (float)max_error);
+  return print_check("matmul_i8_197x768x3072", errors,
+                     (float)max_error);
 }

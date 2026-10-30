@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run existing board binaries sequentially through the user-owned scheduler.
 
-Every actual submission is python ../run_bin.py IMAGE. SDK use below is
+Every actual submission is python ../run_bin.py IMAGE --timeout SECONDS. SDK use below is
 read-only: it retrieves task evidence after that process finishes.
 """
 import argparse
@@ -20,6 +20,13 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from cases import describe, inventory  # noqa: E402
+
+
+def execution_timeout(value):
+    seconds = int(value)
+    if not 1 <= seconds <= 600:
+        raise argparse.ArgumentTypeError('timeout must be an integer between 1 and 600')
+    return seconds
 
 
 def atomic_json(path, value):
@@ -108,15 +115,16 @@ def snapshot_build_evidence(kernels, name, destination):
     return hashes
 
 
-def run_case(name, destination, kernels=None):
+def run_case(name, destination, kernels=None, timeout=120):
     from fpga_scheduler import Client
     case_dir = destination / name
     case_dir.mkdir(parents=True, exist_ok=True)
     kernels = Path(kernels).resolve() if kernels is not None else ROOT / 'build/kernels'
     original = kernels / name / 'board' / (name + '.bin')
     record = dict(case=name, status='BUILD_MISSING', kernel_cycles=[],
+                  execution_timeout_seconds=timeout,
                   started_utc=datetime.now(timezone.utc).isoformat())
-    if not original.is_file():
+    if not original.is_file() or original.stat().st_size == 0:
         atomic_json(case_dir / 'result.json', record)
         return record
     image = case_dir / (name + '.bin')
@@ -132,8 +140,10 @@ def run_case(name, destination, kernels=None):
         path = original.parent / filename
         if path.exists():
             shutil.copyfile(path, case_dir / filename)
-    command = [sys.executable, str(ROOT.parent / 'run_bin.py'), str(image)]
+    command = [sys.executable, str(ROOT.parent / 'run_bin.py'), str(image), '--timeout', str(timeout)]
     record['command'] = command
+    record['status'] = 'SUBMITTING'
+    atomic_json(case_dir / 'result.json', record)
     print('RUN ' + name, flush=True)
     started = time.monotonic()
     lines = []
@@ -146,6 +156,10 @@ def run_case(name, destination, kernels=None):
             log.flush()
             events.write(json.dumps(dict(seconds=time.monotonic() - started, text=line)) + '\n')
             events.flush()
+            task_match = re.search(r'\[FPGA\] Task ([0-9a-f]{32})', line)
+            if task_match:
+                record.update(task_id=task_match[1], status='SUBMITTED')
+                atomic_json(case_dir / 'result.json', record)
             print(name + ': ' + line.rstrip(), flush=True)
         record['process_returncode'] = process.wait()
     record['wall_seconds_with_queue'] = time.monotonic() - started
@@ -164,6 +178,7 @@ def run_case(name, destination, kernels=None):
         (case_dir / 'uart.log').write_text(uart)
         assert result.details.get('image_sha256') == record['image_sha256'], 'submitted image hash mismatch'
         record['kernel_cycles'] = [int(x, 16) for x in re.findall(r'kernel_cycles=0x([0-9a-fA-F]+)', uart)]
+        record['kernel_cycles_raw'] = list(record['kernel_cycles'])
         rounds = re.findall(r'validation_round=(\d+) checked=(\d+) errors=(\d+) guard_errors=(\d+) input_errors=(\d+) output_fnv64=0x([0-9a-fA-F]+)', uart)
         record['validation_rounds'] = [dict(round=int(r[0]), checked=int(r[1]), errors=int(r[2]),
                                            guard_errors=int(r[3]), input_errors=int(r[4]),
@@ -173,6 +188,7 @@ def run_case(name, destination, kernels=None):
             record.update(kernel_returned=int(check[1]), validation_executed=int(check[2] or 1),
                           checked=int(check[3]), errors=int(check[4]),
                           max_abs_error=struct.unpack('!f', bytes.fromhex(check[5].zfill(8)))[0])
+            record['kernel_cycles'] = record['kernel_cycles'][:record['kernel_returned']]
         expected = record['board_config']
         if result.execution_status == 'timeout':
             record['status'] = 'TIMEOUT' if uart.strip() else 'HANG'
@@ -183,6 +199,7 @@ def run_case(name, destination, kernels=None):
             complete = (record.get('validation_executed') == 1 and record.get('errors') == 0 and
                         record.get('checked') == expected['expected_checked'] and
                         record.get('kernel_returned') == expected['expected_invocations'] and
+                        len(record['kernel_cycles_raw']) == expected['expected_invocations'] and
                         len(record['kernel_cycles']) == expected['expected_invocations'])
             if expected.get('validation_mode') == 'accumulator_three_round_bit_exact':
                 expected_ids = expected.get('validation_round_ids', [0, 1, 2])
@@ -214,17 +231,25 @@ def write_report(destination):
     for record in records:
         status = record['status']
         counts[status] = counts.get(status, 0) + 1
-    atomic_json(destination / 'report.json', dict(counts=counts, operators=records))
+    timeouts = sorted({record['execution_timeout_seconds'] for record in records
+                       if 'execution_timeout_seconds' in record})
+    missing_timeout = sum('execution_timeout_seconds' not in record for record in records)
+    atomic_json(destination / 'report.json', dict(counts=counts, operators=records,
+                execution_timeouts_seconds=timeouts, timeout_metadata_missing=missing_timeout))
+    timeout_text = ', '.join(str(seconds) for seconds in timeouts) or 'not recorded'
+    if missing_timeout:
+        timeout_text += f'; {missing_timeout} saved record(s) lack deadline metadata'
     lines = ['# ViT FPGA operator board results', '',
-             'Execution: user-provided `run_bin.py`, sequential submissions; timeout=120 seconds.',
+             f'Execution: user-provided `run_bin.py`, sequential submissions; execution deadline(s) in seconds: {timeout_text}.',
              'Timeout with UART output is TIMEOUT; timeout without UART is HANG.',
              'Scheduler budget includes image load/reset; queue wait is separate.',
              'Cycles measure complete typed adapter plus DMA and final fence, excluding input initialization and oracle.',
-             '', '| Operator | Status | Cycles per invocation | Checked | Errors |',
-             '|---|---|---:|---:|---:|']
+             '', '| Operator | Status | Deadline (s) | Cycles per invocation | Checked | Errors |',
+             '|---|---|---:|---:|---:|---:|']
     for r in records:
         cycles = ', '.join(f'{c:,}' for c in r['kernel_cycles']) or 'unavailable'
-        lines.append(f"| {r['case']} | {r['status']} | {cycles} | {r.get('checked', '—')} | {r.get('errors', '—')} |")
+        lines.append(f"| {r['case']} | {r['status']} | {r.get('execution_timeout_seconds', '—')} | "
+                     f"{cycles} | {r.get('checked', '—')} | {r.get('errors', '—')} |")
     lines += ['', 'Each operator directory preserves the submitted binary/hash, UART, task details and result JSON.',
               'Precomputed references, when embedded, are original launch.c scalar oracle outputs; the board compares every result.',
               'Partial cycles on TIMEOUT/TRAP do not establish correctness.']
@@ -237,6 +262,8 @@ def main():
     parser.add_argument('--report-dir', type=Path, required=True)
     parser.add_argument('--kernels', type=Path, default=ROOT / 'build/kernels',
                         help='Use binaries from this fresh build root')
+    parser.add_argument('--timeout', type=execution_timeout, default=120,
+                        help='scheduler execution deadline in seconds (1..600; queue wait is separate)')
     parser.add_argument('--collect', action='store_true')
     args = parser.parse_args()
     destination = args.report_dir.resolve()
@@ -244,7 +271,7 @@ def main():
     if not args.collect:
         for name in args.case or [c['name'] for c in inventory()]:
             describe(name)
-            run_case(name, destination, args.kernels)
+            run_case(name, destination, args.kernels, args.timeout)
             write_report(destination)
     write_report(destination)
 

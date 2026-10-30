@@ -2,10 +2,16 @@
 
 The model sources were ported from branch `vit-base-patch16-224`, commit
 `478766cfddb11e61560c44d68320ee21279b90ae` of `CBalaa/buddy-mlir-for-fpga`.
-The original 34 operator sources and six added validation/model entries live in their individual case directories. Shared
+The current 43 entries, including quantized attention primitives and
+independent integer/layout primitives, live in their individual case directories. Shared
 configuration lives in each `kernel.py`; `../cases.py` enumerates it without
 importing Triton. Compiler stages and dependencies live in `../common.mk`.
 The original monolithic `triton/kernels.py` is not used.
+
+The current cleanup checks inventory, dependencies, references, Python syntax
+and diffs to prepare later standalone operator verification. It establishes
+no new numerical or FPGA result. The production commands below remain
+available for subsequent work.
 
 Run from the repository root with a Python environment that contains PyTorch,
 Transformers, SafeTensors and the matching built Buddy bindings:
@@ -28,11 +34,29 @@ python "$VIT/tools/model_simcheck.py" --mode w8a8 \
   --replacement "$VIT/build/replacement-w8a8"
 ```
 
-W8A8 dense linears are the default on replacement and the model gate. Use
-`--fp32-reference` and `--mode fp32` explicitly for the dense floating-point
-reference, with a separate replacement output directory (`build/replacement-fp32` by convention). Its composed patch
-projection remains quantized; it is not the pure FP32 HuggingFace baseline. The pinned checkpoint
-is about 346 MB and is not checked in. `fetch_assets.py` verifies its SHA256
+Patch projection and all 73 dense linears use
+quantize -> signed i8 AME `matmul_i8_*` -> dequantize. QK and PV are model
+functions expanded into four actual primitive calls per head. Runtime K/V
+use compiled quantize-transpose kernels; physical i8 RHS is `[N,K]`.
+QK adds compiled unpack and PV adds compiled pack to preserve dense public
+197x197 head layouts with 64-byte aligned primitive slices. There are no
+standalone attention executable cases or configuration dispatch containers.
+The generated adapters only validate descriptors and dispatch one primitive.
+Model-owned scratch enters the graph as mutable memrefs. Standard
+tensor/buffer bridges preserve the activation/output boundaries; production
+workspace checks verify that each primitive reads its producer's storage
+without workspace copies. This is model adaptation and requires no compiler
+extension.
+
+Integer names encode destination semantics: `matmul_i8_*` overwrites C and
+ignores dirty C; `gemm_i8_*` accumulates and remains independent. All production
+matrix routes require overwrite. QK consumes 0.125 once in its dequantizer;
+PV applies no additional factor. Floating-point bias, residual, normalization
+and activation operations retain graph order. FPGA FP32-reference modes are
+disabled; the independent host baseline below remains available. See
+[MODEL.md](../MODEL.md) for primitive names, head offsets and workspace lifetime.
+
+The pinned checkpoint is about 346 MB and is not checked in. `fetch_assets.py` verifies its SHA256
 and reuses an already verified copy. Model import requires the real checkpoint;
 random initialized weights are not a substitute.
 
@@ -41,13 +65,14 @@ BOSCAME plan -> plan verify -> emit`. The graph lowerer handles the remaining
 standard graph plumbing around those external calls; it neither selects
 kernel routes nor compiles numerical operations through a host fallback.
 
-`model_simcheck.py` is currently a prerequisite audit. It checks required case
-results and emitted-module hashes. It returns `SKIP` (exit status 2) for any
+`model_simcheck.py` is currently a prerequisite audit. It checks the 32 required
+case results, emitted-module hashes and the current explicit primitive dependency closure.
+It returns `SKIP` (exit status 2) for any
 blocked/missing kernel, incomplete launch coverage or stale evidence. Even if
 all kernels pass, it cannot claim full-model simulation until a simulator
 executes the complete graph with those emitted kernels and the pinned model
-assets. Host graph check scripts remain available only as optional host
-checks; no NR board execution is part of this port.
+assets. Host graph check scripts remain optional host checks. Standalone board runs
+are separate evidence and do not execute the full model.
 
 
 ## Reproducible accuracy comparison
@@ -82,7 +107,7 @@ must copy `model_id`, `revision`, `checkpoint_sha256`, `inputs_sha256`,
 record `execution="boscame-emitted-simulator"` or `"boscame-hardware"`,
 `full_model_executed=true`, and `all_numerical_kernels_emitted=true` from the
 actual runner. Host graph checks cannot satisfy this protocol. The complete
-emitted-model runner remains unavailable while required operators are blocked.
+emitted-model runner remains unavailable; passing standalone prerequisites does not execute the graph.
 
 The comparison reports max/mean/RMS logit error, prediction agreement and
 labeled top-1/top-5 changes in percentage points. `MEASURED` records metrics;

@@ -84,6 +84,10 @@ int check_close(float actual, float expected, float atol, float rtol) {
 int print_check(const char *name, unsigned count, float maximum) {
   (void)name;
   union { float f; uint32_t u; } value = {maximum};
+  /* DDR result records must use the write-through store policy: the generated
+   * wrapper leaves E6 in the post-kernel uncached-load (shared-read) policy,
+   * otherwise NH may read stale counters after DONE. */
+  nh_e6_cache_writes();
   checked = VIT_BOARD_EXPECTED_CHECKED;
   errors = count;
   maximum_bits = value.u;
