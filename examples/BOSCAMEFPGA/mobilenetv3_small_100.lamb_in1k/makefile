@@ -4,7 +4,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 PYTHON ?= python3
 KERNELS ?= $(ROOT)/build/kernels
 KERNELS := $(abspath $(KERNELS))
-BUDDY_ROOT ?= $(abspath $(ROOT)/../../../buddy-mlir)
+BUDDY_ROOT ?= $(or $(BUDDY_DIR),$(abspath $(ROOT)/../../../buddy-mlir))
 export BUDDY_ROOT
 export PYTHONPATH := $(ROOT)/tools:$(PYTHONPATH)
 ALL_CASES := $(notdir $(patsubst %/kernel.py,%,$(wildcard $(ROOT)/*/kernel.py)))

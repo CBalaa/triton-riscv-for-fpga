@@ -1,11 +1,15 @@
 #include "support.h"
+#ifndef BOSC_NH_ONLY
 #include "nh_e6_platform.h"
+#endif
 #include "uart.h"
 
 static unsigned char arena[VIT_WORKSPACE_BYTES]
     __attribute__((section(".workspace"), aligned(64)));
+#ifndef BOSC_NH_ONLY
 static char log_buffer[4096];
 static unsigned log_used;
+#endif
 
 void *workspace(size_t byte_offset) {
   if (byte_offset >= sizeof arena)
@@ -29,8 +33,12 @@ uint64_t nr_cycles(void) {
 }
 float fabsf(float x) { return x < 0.0f ? -x : x; }
 static void put(const char *s) {
+#ifdef BOSC_NH_ONLY
+  print_uart(s);
+#else
   while (*s && log_used + 1 < sizeof log_buffer)
     log_buffer[log_used++] = *s++;
+#endif
 }
 void nr_puts(const char *s) { put(s); }
 void nr_hex32(uint32_t x) {
@@ -75,9 +83,15 @@ int print_check(const char *name, unsigned errors, float max_error) {
   nr_puts("\r\n");
   return errors != 0;
 }
+#ifdef BOSC_NH_ONLY
+/* Scalar NH kernels do not start DMA/AME or release the E6 core. */
+int main(void) { return launch(); }
+void ame_fence(void) { __asm__ volatile("fence rw, rw" ::: "memory"); }
+#else
 int e6_main(void) { return launch(); }
 const char *nh_e6_app_tag(void) { return "effnet"; }
 void nh_e6_app_report(void) {
   nh_e6_print_tag_prefix();
   uart_puts(log_used ? log_buffer : "(no launch log)\r\n");
 }
+#endif

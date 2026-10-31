@@ -13,7 +13,7 @@ REPORTER := $(VIT_ROOT)/tools/report.py
 EXPORTER := $(VIT_ROOT)/tools/export.py
 FRONTEND := $(REPO_ROOT)/examples/BOSCAMEFPGA/tools/contract_frontend.py
 FRONTEND_ID := $(KERNELS)/.frontend-inputs.json
-BUDDY_ROOT ?= $(REPO_ROOT)/buddy-mlir
+BUDDY_ROOT ?= $(or $(BUDDY_DIR),$(REPO_ROOT)/buddy-mlir)
 BUDDY_BIN ?= $(or $(BUDDY_MLIR_BINARY_DIR),$(BUDDY_ROOT)/build/bin)
 LLVM_BIN ?= $(or $(LLVM_BINARY_DIR),$(BUDDY_ROOT)/llvm/build/bin)
 BUDDY_OPT ?= $(BUDDY_BIN)/buddy-opt
@@ -24,11 +24,13 @@ BUDDY_TOOLS := $(BUDDY_ROOT)/examples/FPGA-BOSCAME/tools
 export BUDDY_ROOT BUDDY_OPT BUDDY_TRANSLATE LLVM_BIN
 export PYTHONPATH := $(VIT_ROOT)/tools:$(PYTHONPATH)
 
+# The scheduler runs NH-only images. These f32 kernels need no AME/RVV;
+# disabling V also prevents vector instructions in the generated ABI wrappers.
 LLC_FLAGS ?= -O2 -filetype=asm -mtriple=riscv64 -target-abi=lp64d \
-  -mattr=+m,+a,+f,+d,+c,+v,+xboscame -code-model=medium
+  -mattr=+m,+a,+f,+d,+c,-v -code-model=medium
 ENCODE_FLAGS ?= --gpr-mode=fixed --preserve-matrix-registers
 RESTRICT_FLAGS ?= --expand-f32-sub --expand-vector-merges --order-vector-copies
-CLANG_FLAGS ?= --target=riscv64-unknown-elf -march=rv64imafdcv_zicsr_zifencei -mabi=lp64d -mno-relax
+CLANG_FLAGS ?= --target=riscv64-unknown-elf -march=rv64imafdc_zicsr_zifencei -mabi=lp64d -mno-relax
 OPT_FILE := $(shell command -v "$(BUDDY_OPT)" 2>/dev/null)
 TRANSLATE_FILE := $(shell command -v "$(BUDDY_TRANSLATE)" 2>/dev/null)
 LLC_FILE := $(shell command -v "$(LLC)" 2>/dev/null)
@@ -103,6 +105,6 @@ ttir boscame llvm asm:
 clean:
 	rm -rf "$(OUT)"
 
-# asm compiles kernel.o. board.mk links that object into the NH/E6 image.
+# asm compiles kernel.o. board.mk links the scheduler-compatible NH image.
 bin: asm
 	$(MAKE) -f $(VIT_ROOT)/board.mk bin
