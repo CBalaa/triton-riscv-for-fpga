@@ -31,6 +31,12 @@ graph tools and numerical checks. Run its `ttir` goal without Buddy; subsequent
 stages use explicit Buddy tools, and assembly filters/simulators use `BUDDY_ROOT`.
 Its source algorithms, approximation authorizations and tolerances are preserved.
 
+[`mobilenetv3_small_100.lamb_in1k`](mobilenetv3_small_100.lamb_in1k/README.md)
+contains 88 float32 Triton operator specializations and a pretrained complete
+model with 121 calls. Its default images execute scalar code on NH, with
+per-call UART progress/timing, independent numerical checks and ELF audits.
+See its integration review for the differences from the ViT execution path.
+
 Optional cross-repository tests live in `test/Integration/BOSCAMEFPGA`. Configure
 the frontend build with `-DBUDDY_ROOT=... -DBUDDY_MLIR_BINARY_DIR=...` to enable
 `check-triton-contract-integration`. They are excluded from the frontend core
