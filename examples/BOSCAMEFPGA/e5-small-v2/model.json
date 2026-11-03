@@ -1,0 +1,89 @@
+{
+  "repository": "intfloat/e5-small-v2",
+  "revision": "ffb93f3bd4047442299a41ebb6fa998a38507c52",
+  "specialization": {
+    "batch": 1,
+    "sequence_length": 128,
+    "hidden_size": 384,
+    "intermediate_size": 1536,
+    "num_layers": 12,
+    "num_heads": 12,
+    "head_dim": 32,
+    "layer_norm_eps": 1e-12,
+    "hidden_act": "gelu",
+    "dtype": "float32",
+    "matmul": "symmetric per-row W8A8 overwrite",
+    "qk_implementation": "exact scalar INT32 accumulation because logical K32 is below AME K64 minimum",
+    "matmul_tile_constraint": "BM<=M, BN<=N, BK<=K"
+  },
+  "inputs": {
+    "input_ids": [
+      128
+    ],
+    "attention_mask": [
+      128
+    ],
+    "token_type_ids": [
+      128
+    ],
+    "position_ids": [
+      128
+    ]
+  },
+  "output": {
+    "sentence_embedding": [
+      384
+    ],
+    "pooling": "masked_mean_then_l2"
+  },
+  "model_runtime": "model_runtime/model.c",
+  "host_reference": "tools/model_reference.py",
+  "operator_inventory": [
+    "add_128x384",
+    "attention_mask_12x128x128",
+    "bias_add_128x1536",
+    "bias_add_128x384",
+    "dequantize_128x128",
+    "dequantize_128x1536",
+    "dequantize_128x32",
+    "dequantize_128x384",
+    "embedding_add_128x384",
+    "embedding_lookup_128x384",
+    "gelu_128x1536",
+    "l2_normalize_1x384",
+    "layernorm_128x384",
+    "matmul_i8_128x128x32",
+    "matmul_i8_128x1536x384",
+    "matmul_i8_128x32x128",
+    "matmul_i8_128x384x1536",
+    "matmul_i8_128x384x384",
+    "mean_pool_128x384",
+    "merge_heads_12x128x32",
+    "quantize_128x128",
+    "quantize_128x1536",
+    "quantize_128x32",
+    "quantize_128x384",
+    "quantize_1536x384",
+    "quantize_384x1536",
+    "quantize_384x384",
+    "quantize_transpose_128x32",
+    "softmax_12x128x128",
+    "split_heads_128x384"
+  ],
+  "board_executed": true,
+  "whole_model_validation": {
+    "status": "PASS",
+    "server": "fpga112",
+    "fpga": 6,
+    "task_id": "e39c7be6daea49c5b72c71bd5cfa602e",
+    "operator_calls": 1649,
+    "checkpoints": 13,
+    "model_cycles": 3500492248,
+    "downloaded_bytes": 2754048,
+    "emitted_reference": "bitwise equality of all three complete output BINs",
+    "report": "MODEL_RESULTS.md",
+    "machine_report": "MODEL_RESULTS.json",
+    "task_accuracy_validated": false,
+    "model_cycles_scope": "complete model launch including 13 checkpoint copies and final hidden copy; snapshot cycles not separately measured"
+  }
+}

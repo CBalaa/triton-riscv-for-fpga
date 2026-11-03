@@ -1,0 +1,269 @@
+{
+  "status": "PASS",
+  "scope": "one real-checkpoint query, complete target model with downloaded full-tensor local validation",
+  "server": "fpga112",
+  "task_id": "e39c7be6daea49c5b72c71bd5cfa602e",
+  "fpga": 6,
+  "state": "completed",
+  "execution_status": "exited",
+  "app_exit_code": 0,
+  "exit_code": 0,
+  "image_bytes": 137044992,
+  "image_sha256": "ca76e585921d67c1d2088c7379550273122e7017d4cc0024b77ef8a2c9da0d67",
+  "model_cycles": 3500492248,
+  "kernel_cycles_sum": 3407672428,
+  "scheduler_seconds": 636.3693592380005,
+  "operator_calls": 1649,
+  "checkpoints": 13,
+  "checkpoint_revision": "ffb93f3bd4047442299a41ebb6fa998a38507c52",
+  "checkpoint_sha256": "45bfa60070649aae2244fbc9d508537779b93b6f353c17b0f95ceccb1c5116c1",
+  "input_text": "query: how much protein should a female eat",
+  "valid_tokens": 11,
+  "ddr_readback_matches": true,
+  "artifacts": [
+    {
+      "name": "sentence_embedding",
+      "address": "0x80370000",
+      "nbytes": 1536,
+      "dtype": "<f4",
+      "shape": [
+        384
+      ],
+      "sha256": "873bd9ab82cead4c2b22811c2c1f239a2273b2e19f53e8596d143033dfc138da"
+    },
+    {
+      "name": "last_hidden",
+      "address": "0x80370600",
+      "nbytes": 196608,
+      "dtype": "<f4",
+      "shape": [
+        128,
+        384
+      ],
+      "sha256": "9b78a4390bbbf84a3c3c23db969f1bfe77e42fe0024acd04894dc9ca0ac52b59"
+    },
+    {
+      "name": "layer_hidden",
+      "address": "0x80100000",
+      "nbytes": 2555904,
+      "dtype": "<f4",
+      "shape": [
+        13,
+        128,
+        384
+      ],
+      "sha256": "ce83c58b776299390be397a595f0849769e0d7c4c99cc8d0c83c51b8ac0b8a85"
+    }
+  ],
+  "downloaded_bytes": 2754048,
+  "downloaded_fp32_elements": 688512,
+  "emitted_implementation_agreement": true,
+  "comparisons": [
+    {
+      "output": "sentence_embedding",
+      "reference": "w8a8",
+      "elements": 384,
+      "max_abs_error": 0.006806083023548126,
+      "rmse": 0.002245780810033256,
+      "cosine": 0.9990316418293462,
+      "download_sha256": "873bd9ab82cead4c2b22811c2c1f239a2273b2e19f53e8596d143033dfc138da",
+      "reference_sha256": "84247434a8e46ae5a29664a4a9e3b491044c0d5c54cf011d3fba8b23d723fa9a"
+    },
+    {
+      "output": "sentence_embedding",
+      "reference": "fp32",
+      "elements": 384,
+      "max_abs_error": 0.005784433335065842,
+      "rmse": 0.002150389236524981,
+      "cosine": 0.9991121584614464,
+      "download_sha256": "873bd9ab82cead4c2b22811c2c1f239a2273b2e19f53e8596d143033dfc138da",
+      "reference_sha256": "0eedbbe9d68943f74976f96a00df9c7f562091ffa51ce688c890746eb7aae172"
+    },
+    {
+      "output": "sentence_embedding",
+      "reference": "emitted",
+      "elements": 384,
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "cosine": 1.0000000000000002,
+      "download_sha256": "873bd9ab82cead4c2b22811c2c1f239a2273b2e19f53e8596d143033dfc138da",
+      "reference_sha256": "873bd9ab82cead4c2b22811c2c1f239a2273b2e19f53e8596d143033dfc138da",
+      "bitwise_equal": true
+    },
+    {
+      "output": "last_hidden",
+      "reference": "w8a8",
+      "elements": 49152,
+      "max_abs_error": 0.10031592845916748,
+      "rmse": 0.019133354561997228,
+      "cosine": 0.9985823455596712,
+      "download_sha256": "9b78a4390bbbf84a3c3c23db969f1bfe77e42fe0024acd04894dc9ca0ac52b59",
+      "reference_sha256": "f3dd944dffbd2d26e7755b514b4aa02d339a09a4976038e5c6c780a58f9a83fc"
+    },
+    {
+      "output": "last_hidden",
+      "reference": "fp32",
+      "elements": 49152,
+      "max_abs_error": 3.758396327495575,
+      "rmse": 0.1644089266225063,
+      "cosine": 0.9192406017252949,
+      "download_sha256": "9b78a4390bbbf84a3c3c23db969f1bfe77e42fe0024acd04894dc9ca0ac52b59",
+      "reference_sha256": "a21e97ec95066a2b1f6813410065fa8d31bc1a0eaf1f89736efca747035bf5a5"
+    },
+    {
+      "output": "last_hidden",
+      "reference": "emitted",
+      "elements": 49152,
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "cosine": 0.9999999999999999,
+      "download_sha256": "9b78a4390bbbf84a3c3c23db969f1bfe77e42fe0024acd04894dc9ca0ac52b59",
+      "reference_sha256": "9b78a4390bbbf84a3c3c23db969f1bfe77e42fe0024acd04894dc9ca0ac52b59",
+      "bitwise_equal": true
+    },
+    {
+      "output": "layer_hidden",
+      "reference": "w8a8",
+      "elements": 638976,
+      "max_abs_error": 0.14168307185173035,
+      "rmse": 0.013885331451351533,
+      "cosine": 0.9996165765064624,
+      "download_sha256": "ce83c58b776299390be397a595f0849769e0d7c4c99cc8d0c83c51b8ac0b8a85",
+      "reference_sha256": "ab30e16bec0b28466c98deca63056a7e848a2e98d8fad9bf0274ba445fe0b4c7",
+      "per_layer_max_abs_error": [
+        2.384185791015625e-06,
+        4.291534423828125e-06,
+        3.337860107421875e-06,
+        0.001052260398864746,
+        0.01059579849243164,
+        0.010739922523498535,
+        0.04287203401327133,
+        0.08437842130661011,
+        0.10058388113975525,
+        0.14168307185173035,
+        0.14120078086853027,
+        0.10790403559803963,
+        0.10031592845916748
+      ],
+      "per_layer_rmse": [
+        8.918755096796044e-08,
+        1.377359036653818e-07,
+        1.6068465013426405e-07,
+        2.7099897103050702e-05,
+        0.00023076330366562846,
+        0.0002808784390486327,
+        0.0042018065246598344,
+        0.012551453410371156,
+        0.016513431495253174,
+        0.024961332200301344,
+        0.0232434714525685,
+        0.022999973850344024,
+        0.019133354561997228
+      ]
+    },
+    {
+      "output": "layer_hidden",
+      "reference": "fp32",
+      "elements": 638976,
+      "max_abs_error": 9.45908635854721,
+      "rmse": 0.2528345243129609,
+      "cosine": 0.8784274971827174,
+      "download_sha256": "ce83c58b776299390be397a595f0849769e0d7c4c99cc8d0c83c51b8ac0b8a85",
+      "reference_sha256": "0882a14a66e918fe0ded98de52f85e824b71de2fd38c273aaf0f6080145ee51b",
+      "per_layer_max_abs_error": [
+        2.384185791015625e-06,
+        0.33619003742933273,
+        0.8465014696121216,
+        2.4711846113204956,
+        6.477142155170441,
+        7.533011108636856,
+        8.006761461496353,
+        9.45908635854721,
+        7.111640214920044,
+        7.2839802503585815,
+        6.984716296195984,
+        5.621567606925964,
+        3.758396327495575
+      ],
+      "per_layer_rmse": [
+        8.918755096796044e-08,
+        0.019329569730339946,
+        0.03292113449400441,
+        0.07522360901217409,
+        0.28125753539408355,
+        0.3422279018667063,
+        0.3493720122488879,
+        0.3773423379203634,
+        0.3122840536498555,
+        0.30322285063960414,
+        0.29769506850304467,
+        0.24108292130274087,
+        0.1644089266225063
+      ]
+    },
+    {
+      "output": "layer_hidden",
+      "reference": "emitted",
+      "elements": 638976,
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "cosine": 1.0,
+      "download_sha256": "ce83c58b776299390be397a595f0849769e0d7c4c99cc8d0c83c51b8ac0b8a85",
+      "reference_sha256": "ce83c58b776299390be397a595f0849769e0d7c4c99cc8d0c83c51b8ac0b8a85",
+      "bitwise_equal": true,
+      "per_layer_max_abs_error": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "per_layer_rmse": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "output_consistency": {
+    "final_layer_to_last_hidden_max_abs_error": 0.0,
+    "masked_mean_l2_to_sentence_max_abs_error": 2.7677900582556703e-08,
+    "pooling_reference": "FP64 NumPy recomputation from downloaded last_hidden and frozen input mask",
+    "final_layer_required_exact": true,
+    "pooling_max_abs_error": 1e-05
+  },
+  "acceptance": {
+    "reference": "host W8A8 contracts; target FP32 reduction/math differences allowed",
+    "sentence_max_abs_error": 0.01,
+    "sentence_cosine_min": 0.999,
+    "last_hidden_max_abs_error": 0.2,
+    "last_hidden_rmse": 0.03,
+    "sentence_norm_abs_error": 0.0001,
+    "emitted_reference_when_provided": "all three complete output BINs must match byte for byte"
+  },
+  "task_accuracy_validated": false,
+  "evidence_directory": "build/model-board-runs/fpga112-checkpoint-query-20261103",
+  "result_sha256": "92191ce69041d8e6d06a113c0da9e937dbcb55b5da28570a7e92a275e07872a7",
+  "local_validation_sha256": "cd8b632afb982a5dd3aa350e8c5d9365fb54d2e88e033ade9a49de21498c89c2",
+  "model_cycles_scope": "E6 e5_model_launch interval, including input/weight validation, workspace/descriptors, all dispatches, 13 full hidden checkpoints/progress markers and final hidden copy; excludes startup, image loading, NH UART, scheduler download and local validation",
+  "snapshot_cycles_measured_separately": false,
+  "kernel_cycles_scope": "sum of actual adapter/kernel calls and closing fences; excludes checkpoints and most C graph management"
+}
