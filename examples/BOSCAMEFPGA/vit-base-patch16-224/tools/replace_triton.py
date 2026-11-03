@@ -747,6 +747,14 @@ def rewrite_linears_to_w8a8(graph, index, calls, report, only=None):
     report.setdefault("original_parameters", [p.name for p in params_before])
     added_params, added_inputs = [], []
     matched = 0
+    # The eager graph duplicates the same identity flatten once per qkv branch
+    # (view_1/view_3/view_5, view_23/view_25/view_27, ...).  They are one SSA
+    # value: Buddy emits one tosa.reshape per ViewOp and bufferization CSE
+    # legitimately collapses the identical reshapes into one buffer.  The
+    # captured call contract must name that survivor, so reuse a single
+    # canonical ViewOp per (source, shape, dtype) instead of recording operand
+    # names that only differ by node identity the later CSE deletes.
+    canonical_views = {}
     for op in list(graph.body):
         if type(op).__name__ not in ("MatmulOp", "MmOp", "LinearOp"):
             continue
@@ -789,6 +797,32 @@ def rewrite_linears_to_w8a8(graph, index, calls, report, only=None):
                 }
             )
             continue
+
+        # A ViewOp is a pure identity reshape: equal source and equal result
+        # shape/dtype means equal value.  Reuse one representative so the
+        # captured operand root is the SSA value bufferization keeps; the
+        # readonly-activation audit then compares real roots, not names that
+        # canonicalize/CSE has already merged.
+        if type(activation).__name__ == "ViewOp":
+            (view_source,) = parents(graph, activation)
+            canonical = canonical_views.setdefault(
+                (
+                    view_source.name,
+                    tuple(shape_of(activation) or []),
+                    dtype_of(activation),
+                ),
+                activation,
+            )
+            if canonical is not activation:
+                report.setdefault("deduplicated_views", []).append(
+                    {
+                        "node": activation.name,
+                        "canonical": canonical.name,
+                        "source": view_source.name,
+                        "shape": list(shape_of(activation) or []),
+                    }
+                )
+                operands[0] = activation = canonical
 
         # Add quantised weights/scales as parameters immediately before the
         # first input placeholder.  Their names are stable for the image

@@ -10,7 +10,8 @@ SECTIONS {
   .text.nh_start 0x80000000 : { KEEP(*(.text.nh_start)) } > RAM
   .text.e6_start 0x80010000 : { KEEP(*(.text.e6_start)) } > RAM
   .text.e6 : { *(.text .text.*) } > RAM
-  .rodata 0x80011238 : { *(.rodata .rodata.* .srodata .srodata.*) } > RAM
+  /* Preserve the tested 40-byte gap as the harness code grows. */
+  .rodata (ALIGN(8) + 40) : { *(.rodata .rodata.* .srodata .srodata.*) } > RAM
   .data : { *(.data .data.* .sdata .sdata.*) } > RAM
   .bss (NOLOAD) : {
     . = ALIGN(64); __bss_start = .;

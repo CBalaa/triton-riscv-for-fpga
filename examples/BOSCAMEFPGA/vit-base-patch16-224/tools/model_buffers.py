@@ -160,8 +160,12 @@ def verify_bufferized_workspace_dataflow(source, function_name, argument_roots, 
     """Audit real bufferized SSA roots, including the only allowed copies.
 
     Workspace destinations/readers must resolve directly to the exact caller
-    argument. A readonly identity-layout allocation may be initialized by one
-    copy from a readonly tensor/view, but can never be a primitive destination.
+    argument. Copy-initialized allocations may only be written by their own
+    initializing copies and read by captured calls or pure plumbing transposes;
+    a tensor-materialization allocation completed by several copies is accepted
+    only when every writer is one of those copies and no caller workspace root
+    feeds it. A copy-initialized allocation can never be a primitive
+    destination.
     """
     import re
     from buddy_mlir import ir
@@ -200,6 +204,39 @@ def verify_bufferized_workspace_dataflow(source, function_name, argument_roots, 
         copy_into = {}
         for op in copies:
             copy_into.setdefault(alias_base(op.operands[1]), []).append(op)
+        def audit_readonly_uses(alias, checked, initializers):
+            """Copied buffers may not be written after initialization.
+
+            Only the initializing copies may write the allocation; captured
+            calls must read it (never as a destination) and must run after the
+            final initializer.  Pure model plumbing may consume it read-only:
+            the bufferized transitive lowerers emit linalg.transpose, whose
+            operand 0 is the read side and operand 1 its own fresh output.
+            """
+            if alias in checked:
+                return
+            checked.add(alias)
+            last_writer = max(operation_order[initializer] for initializer in initializers)
+            for use in alias.uses:
+                user = use.owner.operation
+                if user.name in aliases:
+                    for result in user.results:
+                        audit_readonly_uses(result, checked, initializers)
+                elif user.name == "func.call":
+                    symbol = ir.FlatSymbolRefAttr(user.attributes["callee"]).value
+                    contract = captured_calls.get(symbol)
+                    if contract is None or use.operand_number in contract.get("destination_indices", []):
+                        raise ValueError("readonly layout allocation is passed to an unknown/writing call")
+                    if operation_order[user] <= last_writer:
+                        raise ValueError("readonly layout allocation is read before its initializing copy")
+                elif user.name == "memref.copy":
+                    if use.operand_number == 1 and user not in initializers:
+                        raise ValueError("readonly layout allocation has a second copy writer")
+                elif user.name == "linalg.transpose":
+                    if use.operand_number != 0:
+                        raise ValueError("readonly layout allocation has an unapproved writer/use")
+                elif user.name not in {"memref.dealloc", "memref.dim"}:
+                    raise ValueError("readonly layout allocation has an unapproved writer/use")
         def origin(value, follow_copy=True, visited=None):
             visited = set() if visited is None else visited
             if value in visited:
@@ -220,28 +257,7 @@ def verify_bufferized_workspace_dataflow(source, function_name, argument_roots, 
                 if owner.name != "memref.alloc" or len(incoming) != 1 or value in destinations:
                     raise ValueError("readonly layout allocation has multiple writers or is a primitive destination")
                 # A fresh allocation's only write may be its initializing copy.
-                def check_readonly_uses(alias, checked):
-                    if alias in checked:
-                        return
-                    checked.add(alias)
-                    for use in alias.uses:
-                        user = use.owner.operation
-                        if user.name in aliases:
-                            for result in user.results:
-                                check_readonly_uses(result, checked)
-                        elif user.name == "func.call":
-                            symbol = ir.FlatSymbolRefAttr(user.attributes["callee"]).value
-                            contract = captured_calls.get(symbol)
-                            if contract is None or use.operand_number in contract.get("destination_indices", []):
-                                raise ValueError("readonly layout allocation is passed to an unknown/writing call")
-                            if operation_order[user] <= operation_order[incoming[0]]:
-                                raise ValueError("readonly layout allocation is read before its initializing copy")
-                        elif user.name == "memref.copy":
-                            if use.operand_number == 1 and user != incoming[0]:
-                                raise ValueError("readonly layout allocation has a second copy writer")
-                        elif user.name not in {"memref.dealloc", "memref.dim"}:
-                            raise ValueError("readonly layout allocation has an unapproved writer/use")
-                check_readonly_uses(value, set())
+                audit_readonly_uses(value, set(), incoming)
                 result = origin(incoming[0].operands[0], follow_copy, visited)
                 if result.get("base_root") in workspace_names:
                     raise ValueError("workspace was copied into a readonly layout allocation")
@@ -279,17 +295,85 @@ def verify_bufferized_workspace_dataflow(source, function_name, argument_roots, 
                 operands.append(actual)
                 details.append(detail)
             records.append({"symbol": symbol, "operands": operands, "dataflow": details})
+        provenance_cache = {}
+        def provenance_roots(value, active=None):
+            """Caller roots that can feed a copied buffer.
+
+            Follow aliases, copy-initialized local allocations and the pure
+            model plumbing transposes one-shot-bufferization emits.  A caller
+            workspace root in this set means mutable model data was smuggled
+            through a hidden copy.  Opaque producers (compiled calls) cannot
+            be caller roots.
+            """
+            if value in provenance_cache:
+                return provenance_cache[value]
+            active = set() if active is None else active
+            if value in active:
+                raise ValueError("cyclic buffer alias")
+            active.add(value)
+            if value in arguments:
+                roots = {arguments[value][1]}
+            else:
+                owner = value.owner
+                if not hasattr(owner, "operation"):
+                    raise ValueError("unexpected region block argument in primitive buffer")
+                owner = owner.operation
+                if owner.name in aliases:
+                    roots = provenance_roots(owner.operands[0], active)
+                elif owner.name == "memref.alloc":
+                    roots = set()
+                    for writer in copy_into.get(value, []):
+                        roots |= provenance_roots(writer.operands[0], active)
+                    for use in value.uses:
+                        user = use.owner.operation
+                        if user.name == "linalg.transpose" and use.operand_number == 1:
+                            roots |= provenance_roots(user.operands[0], active)
+                elif owner.name == "linalg.transpose":
+                    roots = provenance_roots(owner.operands[0], active)
+                else:
+                    roots = set()
+            active.discard(value)
+            provenance_cache[value] = roots
+            return roots
         readonly_copies = []
+        materialized_copies = []
+        checked_allocs = set()
         for copy in copies:
             destination = alias_base(copy.operands[1])
-            if destination in arguments and arguments[destination][1] in workspace_names:
-                raise ValueError("bufferization inserted a workspace copy")
-            detail = origin(copy.operands[1])
-            if not detail.get("readonly_copy"):
-                raise ValueError("unapproved non-readonly copy in model plumbing")
-            readonly_copies.append(detail)
+            if destination in arguments:
+                if arguments[destination][1] in workspace_names:
+                    raise ValueError("bufferization inserted a workspace copy")
+                continue
+            if destination.owner.operation.name != "memref.alloc":
+                raise ValueError("copy destination is not a local allocation")
+            if destination in destinations:
+                raise ValueError("readonly layout allocation is a primitive destination")
+            incoming = copy_into.get(destination, [])
+            if destination in checked_allocs:
+                continue
+            checked_allocs.add(destination)
+            # Every writer of a copy-initialized allocation must be one of its
+            # own initializing copies; call destinations and unknown readers
+            # are still rejected by the shared audit.
+            audit_readonly_uses(destination, set(), incoming)
+            for initializer in incoming:
+                if provenance_roots(initializer.operands[0]) & workspace_names:
+                    raise ValueError("workspace data was copied into a model-local allocation")
+            if len(incoming) == 1:
+                detail = origin(destination)
+                if not detail.get("readonly_copy"):
+                    raise ValueError("unapproved non-readonly copy in model plumbing")
+                readonly_copies.append(detail)
+            else:
+                materialized_copies.append({
+                    "destination_location": str(destination.owner.operation.location),
+                    "writers": len(incoming),
+                    "sources": [str(initializer.operands[0]) for initializer in incoming],
+                })
         return {"schema": 1, "status": "PASS", "scope": "real local bufferized primitive SSA root continuity; no numerical execution",
             "calls": len(actual_calls), "ordered_call_symbols": list(targets), "dataflow_verified": True,
             "actual_operand_roots": records, "workspace_operands_checked": workspace_operands,
             "destinations_checked": destination_count, "workspace_copy_operations": 0,
-            "readonly_layout_copies": len(readonly_copies), "readonly_layout_copy_details": readonly_copies}
+            "readonly_layout_copies": len(readonly_copies), "readonly_layout_copy_details": readonly_copies,
+            "tensor_materialization_copies": len(materialized_copies),
+            "tensor_materialization_copy_details": materialized_copies}

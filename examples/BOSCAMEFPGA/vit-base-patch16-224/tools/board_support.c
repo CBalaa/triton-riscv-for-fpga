@@ -14,8 +14,20 @@ typedef struct __attribute__((aligned(64))) {
   unsigned char padding[56];
 } CycleSlot;
 static CycleSlot cycle_slots[VIT_BOARD_EXPECTED_INVOCATIONS];
-static volatile unsigned kernel_returned, validation_executed;
-static volatile unsigned checked, errors, maximum_bits;
+/* NH can observe invocation completion while E6 is still validating. Keep
+ * final validation cells separate from every word touched during that phase. */
+typedef struct __attribute__((aligned(64))) {
+  unsigned returned;
+  unsigned char padding[60];
+} InvocationState;
+typedef struct __attribute__((aligned(64))) {
+  unsigned validated, checked, errors, maximum_bits;
+  unsigned char padding[48];
+} ValidationState;
+static volatile InvocationState invocation_state;
+static volatile ValidationState validation_state;
+#define kernel_returned invocation_state.returned
+#define validation_executed validation_state.validated
 static volatile uint64_t diagnostic_values[8];
 static unsigned diagnostic_count;
 #if defined(VIT_BOARD_ACCUMULATOR_VALIDATION)
@@ -88,9 +100,9 @@ int print_check(const char *name, unsigned count, float maximum) {
    * wrapper leaves E6 in the post-kernel uncached-load (shared-read) policy,
    * otherwise NH may read stale counters after DONE. */
   nh_e6_cache_writes();
-  checked = VIT_BOARD_EXPECTED_CHECKED;
-  errors = count;
-  maximum_bits = value.u;
+  validation_state.checked = VIT_BOARD_EXPECTED_CHECKED;
+  validation_state.errors = count;
+  validation_state.maximum_bits = value.u;
   validation_executed = 1;
   __asm__ volatile("fence rw, rw" ::: "memory");
   return count != 0;
@@ -193,9 +205,9 @@ void nh_e6_app_report(void) {
   nh_e6_print_tag_prefix();
   print_uart("kernel_returned="); print_uart_dec32(returned);
   print_uart(" validation_executed="); print_uart_dec32(validation_executed);
-  print_uart(" checked="); print_uart_dec32(checked);
-  print_uart(" errors="); print_uart_dec32(errors);
-  print_uart(" max_abs_error_f32_bits=0x"); print_uart_hex32(maximum_bits);
+  print_uart(" checked="); print_uart_dec32(validation_state.checked);
+  print_uart(" errors="); print_uart_dec32(validation_state.errors);
+  print_uart(" max_abs_error_f32_bits=0x"); print_uart_hex32(validation_state.maximum_bits);
   print_uart("\r\n");
   uint32_t done = *(volatile uint32_t *)NH_E6_DONE_REG;
   if (done == NH_E6_DONE_TRAP) {
@@ -207,7 +219,7 @@ void nh_e6_app_report(void) {
   } else {
     int ok = done == NH_E6_DONE_PASS && validation_executed &&
         returned == VIT_BOARD_EXPECTED_INVOCATIONS &&
-        checked == VIT_BOARD_EXPECTED_CHECKED && !errors;
+        validation_state.checked == VIT_BOARD_EXPECTED_CHECKED && !validation_state.errors;
     print_uart(ok
         ? "@@FPGA_RESULT {\"version\":1,\"status\":\"exited\",\"app_exit_code\":0}\r\n"
         : "@@FPGA_RESULT {\"version\":1,\"status\":\"exited\",\"app_exit_code\":1}\r\n");

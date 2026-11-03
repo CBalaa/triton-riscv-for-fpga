@@ -13,3 +13,6 @@ build/*
 .omx/
 triton
 /artifacts/
+
+# Local agent skills, credentials, and connection state.
+/.agent/

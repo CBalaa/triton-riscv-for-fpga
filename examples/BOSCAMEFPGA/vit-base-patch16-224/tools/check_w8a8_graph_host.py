@@ -91,6 +91,11 @@ def main():
         "--replacement", type=Path, default=ROOT / "build/replacement-w8a8"
     )
     parser.add_argument("--host-library", type=Path, required=True)
+    parser.add_argument(
+        "--oracle-dispatch",
+        action="store_true",
+        help="evaluate external kernel calls with tools/model_host_oracle.py",
+    )
     parser.add_argument("--llvm-lib-dir", type=Path, default=llvm_lib_dir())
     parser.add_argument(
         "--output", type=Path, default=ROOT / "build/w8a8-graph-host-check.json"
@@ -264,7 +269,7 @@ def main():
     with ir.Location.unknown(graph._ctx):
         graph._imported_module = ir.Module.parse(source, context=graph._ctx)
     started = time.time()
-    graph.lower_to_llvm_ir(enable_openmp=False)
+    graph.lower_to_llvm_ir()
     lowering_seconds = round(time.time() - started, 3)
     llvm_lib = args.llvm_lib_dir
     libs = [
@@ -274,6 +279,11 @@ def main():
     ]
     for path in libs:
         require(path)
+    dispatcher = None
+    if args.oracle_dispatch:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from model_host_oracle import HostOracleDispatcher
+        dispatcher = HostOracleDispatcher(args.replacement, args.host_library)
     engine = ExecutionEngine(
         graph._imported_module,
         opt_level=args.opt_level,
@@ -288,6 +298,8 @@ def main():
     started = time.time()
     engine.invoke(entry, output_slot, *input_slots)
     invocation_seconds = round(time.time() - started, 3)
+    if dispatcher is not None and dispatcher.errors:
+        raise RuntimeError("host kernel dispatch failed:\n" + dispatcher.errors[0])
     result = np.array(
         rt.ranked_memref_to_numpy(ctypes.pointer(getattr(output_struct, "0"))),
         copy=True,
@@ -323,6 +335,7 @@ def main():
         ),
         "lowering_seconds": lowering_seconds,
         "invocation_seconds": invocation_seconds,
+        "host_oracle": None if dispatcher is None else dispatcher.summary(),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(summary, indent=2) + "\n")

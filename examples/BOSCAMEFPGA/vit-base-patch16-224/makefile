@@ -25,7 +25,7 @@ FRONTEND := $(abspath $(ROOT)/../tools/contract_frontend.py)
 FRONTEND_ID := $(KERNELS)/.frontend-inputs.json
 STAGE ?= asm
 
-.PHONY: all ttir boscame llvm asm _suite $(CASE_TARGETS) FORCE simcheck w8a8-chaincheck patch-chaincheck operatorcheck model-simcheck launchcheck assets import replace lower clean
+.PHONY: all ttir boscame llvm asm _suite $(CASE_TARGETS) FORCE simcheck w8a8-chaincheck patch-chaincheck operatorcheck model-simcheck launchcheck assets import replace lower model-bin clean
 all: asm
 ttir boscame llvm asm:
 	+@code=0; $(MAKE) --no-print-directory -k _suite STAGE=$@ || code=$$?; \
@@ -74,3 +74,9 @@ lower:
 	$(PYTHON) -B "$(ROOT)/tools/lower_model.py" --replacement "$(REPLACEMENT)" --output "$(ROOT)/build/lowered"
 clean:
 	rm -rf "$(ROOT)/build"
+# Whole-model ViT-B/16 image (artifact only; board fit/run tracked separately).
+MODEL_OUT ?= $(ROOT)/build/model-bin
+model-bin:
+	$(PYTHON) -B "$(ROOT)/tools/build_model_bin.py" --output "$(MODEL_OUT)" \
+	  --replacement "$(REPLACEMENT)" --kernels "$(KERNELS)" --assets "$(ASSETS)" \
+	  $(if $(REUSE_LOWERED),--reuse-lowered,)
