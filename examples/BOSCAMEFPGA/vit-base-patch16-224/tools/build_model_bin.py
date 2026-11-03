@@ -811,7 +811,9 @@ def stage_link(ctx, objects):
     audit_output = ctx.output / "elf-audit.json"
     audit_flags = []
     if os.environ.get("ALLOW_VECTOR_ORDERED_REDUCTIONS") == "1":
-        audit_flags = ["--allow-vector-ordered-reductions"]
+        audit_flags.append("--allow-vector-ordered-reductions")
+    if os.environ.get("ALLOW_VECTOR_MAX_REDUCTIONS") == "1":
+        audit_flags.append("--allow-vector-max-reductions")
     try:
         run(
             [sys.executable, str(BUDDY_TOOLS / "check_nr_elf.py"), elf,

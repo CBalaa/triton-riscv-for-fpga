@@ -185,7 +185,7 @@ boscame: $(V_DIR)/kernel.boscame.mlir
 # operations into `bosc_ame.intr.*` with the configuration and byte strides
 # the hardware needs, and finishes the memref/func/arith/scf lowering.
 $(V_DIR)/kernel.llvm.mlir: $(V_DIR)/kernel.boscame.mlir $(BUILD_MAKEFILE) $(wildcard $(BUDDY_OPT)) $(V_DIR)/.ordered-reduction-policy $(FPGA_REDUCTION_POLICY_MAKEFILE)
-	$(BUDDY_OPT) $< --lower-bosc-ame="$(FPGA_ORDERED_REDUCTION_LOWER_OPTION)" -o $@
+	$(BUDDY_OPT) $< --lower-bosc-ame="$(FPGA_REDUCTION_LOWER_OPTIONS)" -o $@
 
 $(V_DIR)/kernel.ll: $(V_DIR)/kernel.llvm.mlir $(BUILD_MAKEFILE) $(wildcard $(BUDDY_TRANSLATE))
 	$(BUDDY_TRANSLATE) --buddy-to-llvmir $< -o $@
@@ -206,7 +206,7 @@ $(V_DIR)/kernel.nr.s: $(V_DIR)/kernel.encoded.s $(TOOLS)/restrict_fpga_assembly.
 	@set -eu; \
 	tmp="$@.tmp"; \
 	trap 'rm -f "$$tmp"' EXIT INT TERM; \
-	$(PYTHON) $(TOOLS)/restrict_fpga_assembly.py $(ORDERED_REDUCTION_FILTER_FLAGS) $(FENCE_FLAGS) --order-vector-copies < $< > "$$tmp"; \
+	$(PYTHON) $(TOOLS)/restrict_fpga_assembly.py $(FPGA_REDUCTION_FILTER_FLAGS) $(FENCE_FLAGS) --order-vector-copies < $< > "$$tmp"; \
 	test -s "$$tmp" || { echo "error: assembly filter produced no output" >&2; exit 1; }; \
 	if test -r "$@" && cmp -s "$$tmp" "$@"; then rm -f "$$tmp"; else mv -f "$$tmp" "$@"; fi; \
 	trap - EXIT INT TERM
@@ -286,7 +286,7 @@ audit: $(ELF)
 	@echo "ok: DDR window exported and the PMP/satp setup sequence is in the image"
 
 $(BIN): $(ELF) $(TOOLS)/check_nr_elf.py $(V_DIR)/.ordered-reduction-policy $(FPGA_REDUCTION_POLICY_MAKEFILE)
-	$(PYTHON) $(TOOLS)/check_nr_elf.py $< --objdump $(OBJDUMP) $(ORDERED_REDUCTION_FLAGS) $(AUDIT_FENCE_FLAGS) --output $(V_DIR)/elf-audit.json
+	$(PYTHON) $(TOOLS)/check_nr_elf.py $< --objdump $(OBJDUMP) $(FPGA_REDUCTION_AUDIT_FLAGS) $(AUDIT_FENCE_FLAGS) --output $(V_DIR)/elf-audit.json
 	$(OBJCOPY) -O binary $< $@
 	@echo "built $@"
 

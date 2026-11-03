@@ -83,7 +83,7 @@ $(foreach dep,$(BOARD_DEP_CASES),$(eval $(call board_dependency,$(dep))))
 $(BOARD_ELF): $(BOARD_OBJECTS) $(BOARD_LINK_SCRIPT) $(BOARD_BUILD_INPUTS)
 	$(LINKER) -m elf64lriscv --gc-sections -T $(BOARD_LINK_SCRIPT) -Map=$(BOARD)/$(CASE).map -o $@ $(BOARD_OBJECTS)
 $(BOARD_BIN): $(BOARD_ELF) $(BUDDY_TOOLS)/check_nr_elf.py $(OUT)/.ordered-reduction-policy $(FPGA_REDUCTION_POLICY_MAKEFILE)
-	$(PYTHON) $(BUDDY_TOOLS)/check_nr_elf.py $< --objdump $(OBJDUMP) $(ORDERED_REDUCTION_FLAGS) --output $(BOARD)/elf-audit.json
+	$(PYTHON) $(BUDDY_TOOLS)/check_nr_elf.py $< --objdump $(OBJDUMP) $(FPGA_REDUCTION_AUDIT_FLAGS) --output $(BOARD)/elf-audit.json
 	$(OBJCOPY) -O binary $< $@
 .PHONY: bin
 bin: $(BOARD_BIN)

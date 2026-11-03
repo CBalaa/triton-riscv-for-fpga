@@ -16,3 +16,4 @@ triton
 
 # Local agent skills, credentials, and connection state.
 /.agent/
+/ModelZoo/

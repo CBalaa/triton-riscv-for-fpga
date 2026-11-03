@@ -37,6 +37,32 @@ model with 121 calls. Its default images execute scalar code on NH, with
 per-call UART progress/timing, independent numerical checks and ELF audits.
 See its integration review for the differences from the ViT execution path.
 
+The text-model adaptations below follow the ViT operator/launcher/typed ABI
+and NH/E6 link structure, with fixed batch 1 and sequence length 128:
+
+| Model | Example |
+| --- | --- |
+| google/electra-base-discriminator | [electra-base-discriminator](electra-base-discriminator/README.md) |
+| xlnet/xlnet-base-cased | [xlnet-base-cased](xlnet-base-cased/README.md) |
+| thenlper/gte-small | [gte-small](gte-small/README.md) |
+| intfloat/e5-small-v2 | [e5-small-v2](e5-small-v2/README.md) |
+
+Each includes real Triton kernels, independent C launchers, complete C model
+routing, host checks and NH/E6 target builds. All matmul tiles are bounded by
+logical M/N/K. Model READMEs provide asset preparation, build and run commands.
+
+For complete-model validation, execute the C graph with emitted scalar LLVM
+locally and compare every output byte with the scheduler-downloaded FPGA BINs.
+Host matrix products use exact signed INT8/INT32 C dots. The board computes and
+captures outputs; numerical verification runs locally. The shared
+`tools/run_returned_outputs.py` and `tools/verify_returned_outputs.py` provide
+independent operator download and local C launcher checks.
+
+FPGA builds enable scalar FP32 ordered-add and max reduction lowering while
+retaining other vector arithmetic. The XLNet README documents a remaining
+1 ULP difference under strict emitted-vs-FPGA comparison; the hardware cause
+is undetermined.
+
 Optional cross-repository tests live in `test/Integration/BOSCAMEFPGA`. Configure
 the frontend build with `-DBUDDY_ROOT=... -DBUDDY_MLIR_BINARY_DIR=...` to enable
 `check-triton-contract-integration`. They are excluded from the frontend core

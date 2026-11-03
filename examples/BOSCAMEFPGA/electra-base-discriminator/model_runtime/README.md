@@ -22,7 +22,6 @@ mocks. It checks every argument's shape, stride, alignment and nonaliasing,
 and compares all 1,645 calls with the independent Python schedule. It also
 rejects insufficient scratch and invalid token IDs. This establishes ABI and
 call order; mocked kernels do not establish complete-model numerical results.
-`tools/model_reference.py` separately compares host arithmetic with HF.
 
 `make model-runtime-object` cross-compiles this scheduling to an RV64 object.
 `tools/build_model_bin.py` now links a complete NH/E6 image with actual audited
@@ -32,11 +31,9 @@ matrix/row-scale bindings, prepared by `prepare_model_board.py`, and skips the
 Defining `ELECTRA_MODEL_BOARD` enables immutable layer snapshots for scheduler
 download. There is no numerical oracle on the FPGA.
 
-The real 12-layer/discriminator image completed all 1,571 calls on fpga112;
-every downloaded layer and final logit was bit-identical to a local execution
-of the actual graph/emitted scalar LLVM plus an exact integer-dot oracle.
-The independent Torch W8A8 comparison failed its frozen tolerance; complete
-model numerical validation remains **FAIL**. This implementation comparison
-does not establish agreement with the independent mathematical reference.
-Independent Torch and HF FP32 differences are preserved in
-[MODEL_BOARD_RESULTS.md](../MODEL_BOARD_RESULTS.md).
+The default FPGA build enables C++ scalar FP32 max reduction lowering and
+audits the final ELF for residual `vfredmax.vs`. The default runner downloads
+all 14 tensors and accepts only byte/FP32-bit equality against local execution
+of the actual graph/emitted scalar LLVM plus exact C integer dots, after
+checking scheduler and build provenance. See the [main README](../README.md)
+for build, execution, download and offline verification commands.

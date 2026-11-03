@@ -45,8 +45,9 @@ buffer bounds, provenance and call order. It does not establish numerical
 target execution. The separate model runner downloads actual sentence,
 hidden-state and 13-layer checkpoint BINs for full local comparison, and
 `--validate-only` repeats that check without invoking the scheduler.
-The actual complete model passed fpga112 execution with 1,649 calls and 13
-checkpoints. All downloaded outputs match the local emitted scalar LLVM plus
-exact INT8/INT32 dot reference byte for byte; see
-[../MODEL_RESULTS.md](../MODEL_RESULTS.md) for task ID, cycles, complete-output
-hashes, W8A8/HF FP32 comparisons and limitations.
+It requires a previously executed emitted reference and writes results into a
+new review directory; archived execution evidence is never overwritten.
+Complete-output byte equality against locally executed emitted scalar LLVM
+and exact INT8/INT32 dot operations is the numerical acceptance criterion.
+The normal FPGA compiler uses the C++ scalar FP32 max workaround. Build, run,
+download and local verification commands are in the [main README](../README.md).

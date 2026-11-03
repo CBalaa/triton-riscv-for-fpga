@@ -56,10 +56,10 @@ $(FRONTEND_ID): | $(KERNELS)
 # artifacts too. Unchanged inputs preserve this file's timestamp.
 $(OUT)/.compiler-inputs.json: FORCE $(REPORTER) | $(OUT)
 	@$(PYTHON) -B "$(REPORTER)" inputs --inputs "$@" \
-	  --value 'opt=$(BUDDY_OPT)' --value 'ordered-reduction-lowering=$(FPGA_ORDERED_REDUCTION_LOWER_OPTION)' --value 'translate=$(BUDDY_TRANSLATE)' \
+	  --value 'opt=$(BUDDY_OPT)' --value 'reduction-lowering=$(FPGA_REDUCTION_LOWER_OPTIONS)' --value 'translate=$(BUDDY_TRANSLATE)' \
 	  --value 'llc=$(LLC) $(LLC_FLAGS)' --value 'clang=$(CLANG) $(CLANG_FLAGS)' \
 	  --value 'encode=$(PYTHON) $(BUDDY_TOOLS)/ame_to_word.py $(ENCODE_FLAGS)' \
-	  --value 'restrict=$(PYTHON) $(BUDDY_TOOLS)/restrict_fpga_assembly.py $(RESTRICT_FLAGS) $(ORDERED_REDUCTION_FILTER_FLAGS)'
+	  --value 'restrict=$(PYTHON) $(BUDDY_TOOLS)/restrict_fpga_assembly.py $(RESTRICT_FLAGS) $(FPGA_REDUCTION_FILTER_FLAGS)'
 
 # Invalidate old PASS evidence before touching an artifact. A failed command
 # records its stage/log; successful commands are followed by the public-stage
@@ -84,7 +84,7 @@ $(OUT)/kernel.planned.mlir: $(OUT)/kernel.bufferized.mlir $(BACKEND_INPUTS) $(OP
 $(OUT)/kernel.boscame.mlir: $(OUT)/kernel.planned.mlir $(BACKEND_INPUTS) $(OPT_FILE)
 	$(call run_stage,boscame,"$(BUDDY_OPT)" "$<" --bosc-ame-emit -o "$@")
 $(OUT)/kernel.llvm.mlir: $(OUT)/kernel.boscame.mlir $(BACKEND_INPUTS) $(OPT_FILE) $(OUT)/.ordered-reduction-policy
-	$(call run_stage,llvm,"$(BUDDY_OPT)" "$<" --lower-bosc-ame="$(FPGA_ORDERED_REDUCTION_LOWER_OPTION)" -o "$@")
+	$(call run_stage,llvm,"$(BUDDY_OPT)" "$<" --lower-bosc-ame="$(FPGA_REDUCTION_LOWER_OPTIONS)" -o "$@")
 $(OUT)/kernel.ll: $(OUT)/kernel.llvm.mlir $(BACKEND_INPUTS) $(TRANSLATE_FILE)
 	$(call run_stage,llvm-ir,"$(BUDDY_TRANSLATE)" --buddy-to-llvmir "$<" -o "$@")
 $(OUT)/kernel.s: $(OUT)/kernel.ll $(BACKEND_INPUTS) $(LLC_FILE)
@@ -92,7 +92,7 @@ $(OUT)/kernel.s: $(OUT)/kernel.ll $(BACKEND_INPUTS) $(LLC_FILE)
 $(OUT)/kernel.encoded.s: $(OUT)/kernel.s $(BACKEND_INPUTS) $(BUDDY_TOOLS)/ame_to_word.py
 	$(call run_stage,encode,"$(PYTHON)" "$(BUDDY_TOOLS)/ame_to_word.py" $(ENCODE_FLAGS) < "$<" > "$@.tmp"; mv "$@.tmp" "$@")
 $(OUT)/kernel.nr.s: $(OUT)/kernel.encoded.s $(BACKEND_INPUTS) $(BUDDY_TOOLS)/restrict_fpga_assembly.py
-	$(call run_stage,restrict,"$(PYTHON)" "$(BUDDY_TOOLS)/restrict_fpga_assembly.py" $(RESTRICT_FLAGS) $(ORDERED_REDUCTION_FILTER_FLAGS) < "$<" > "$@.tmp"; mv "$@.tmp" "$@")
+	$(call run_stage,restrict,"$(PYTHON)" "$(BUDDY_TOOLS)/restrict_fpga_assembly.py" $(RESTRICT_FLAGS) $(FPGA_REDUCTION_FILTER_FLAGS) < "$<" > "$@.tmp"; mv "$@.tmp" "$@")
 $(OUT)/kernel.o: $(OUT)/kernel.nr.s $(BACKEND_INPUTS) $(CLANG_FILE)
 	$(call run_stage,object,"$(CLANG)" $(CLANG_FLAGS) -c "$<" -o "$@")
 

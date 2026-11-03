@@ -4,6 +4,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 PYTHON ?= python3
 KERNELS ?= $(ROOT)/build/kernels
 KERNELS := $(abspath $(KERNELS))
+MODEL_HOST ?= $(ROOT)/build/model-host
 ALL_CASES := $(notdir $(patsubst %/kernel.py,%,$(wildcard $(ROOT)/*/kernel.py)))
 CASES ?= $(ALL_CASES)
 CASE_ARGS := $(foreach case,$(sort $(CASES)),--case $(case))
@@ -40,7 +41,7 @@ model-bin:
 	+$(MAKE) --no-print-directory -C "$(ROOT)" asm CASES="$(ALL_CASES)" KERNELS="$(KERNELS)" PYTHON="$(PYTHON)"
 	$(PYTHON) -B "$(ROOT)/tools/build_model_board.py" --kernels "$(KERNELS)"
 model-host:
-	$(PYTHON) -B "$(ROOT)/tools/build_model_host.py" --kernels "$(KERNELS)"
+	$(PYTHON) -B "$(ROOT)/tools/build_model_host.py" --kernels "$(KERNELS)" --output "$(MODEL_HOST)"
 assets:
 	$(PYTHON) -B "$(ROOT)/tools/fetch_assets.py" --output "$(ROOT)/assets"
 clean:

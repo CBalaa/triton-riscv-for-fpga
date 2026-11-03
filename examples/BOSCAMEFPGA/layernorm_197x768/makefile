@@ -117,7 +117,7 @@ boscame: $(OUT)/kernel.boscame.mlir
 
 # --- 3. BOSCAME -> LLVM dialect -> LLVM IR -----------------------------
 $(OUT)/kernel.llvm.mlir: $(OUT)/kernel.boscame.mlir $(BUILD_MAKEFILE) $(wildcard $(BUDDY_OPT)) $(OUT)/.ordered-reduction-policy $(FPGA_REDUCTION_POLICY_MAKEFILE)
-	$(BUDDY_OPT) $< --lower-bosc-ame="$(FPGA_ORDERED_REDUCTION_LOWER_OPTION)" -o $@
+	$(BUDDY_OPT) $< --lower-bosc-ame="$(FPGA_REDUCTION_LOWER_OPTIONS)" -o $@
 $(OUT)/kernel.ll: $(OUT)/kernel.llvm.mlir $(BUILD_MAKEFILE) $(wildcard $(BUDDY_TRANSLATE))
 	$(BUDDY_TRANSLATE) --buddy-to-llvmir $< -o $@
 llvm: $(OUT)/kernel.ll
@@ -128,7 +128,7 @@ $(OUT)/kernel.s: $(OUT)/kernel.ll $(BUILD_MAKEFILE)
 
 # --- 5. NR post-processing: restricted NR instruction stream ------------
 $(OUT)/kernel.nr.s: $(OUT)/kernel.s $(TOOLS)/restrict_fpga_assembly.py $(OUT)/.ordered-reduction-policy $(FPGA_REDUCTION_POLICY_MAKEFILE)
-	$(PYTHON) $(TOOLS)/restrict_fpga_assembly.py $(ORDERED_REDUCTION_FILTER_FLAGS) --expand-f32-sub < $< > $@
+	$(PYTHON) $(TOOLS)/restrict_fpga_assembly.py $(FPGA_REDUCTION_FILTER_FLAGS) --expand-f32-sub < $< > $@
 asm: $(OUT)/kernel.nr.s
 
 $(OUT)/kernel.o: $(OUT)/kernel.nr.s $(BUILD_MAKEFILE)
@@ -165,7 +165,7 @@ IMAGE_OBJECTS := $(OBJ)/nh_e6_boot.o $(OBJ)/nh_e6_platform.o $(OBJ)/uart.o \
 $(ELF): $(IMAGE_OBJECTS) $(ROOT)/link.ld $(BUILD_MAKEFILE)
 	$(LINKER) -m elf64lriscv --gc-sections -T $(ROOT)/link.ld -Map=$(OUT)/$(NAME).map -o $@ $(IMAGE_OBJECTS)
 $(BIN): $(ELF) $(TOOLS)/check_nr_elf.py $(OUT)/.ordered-reduction-policy $(FPGA_REDUCTION_POLICY_MAKEFILE)
-	$(PYTHON) $(TOOLS)/check_nr_elf.py $< --objdump $(OBJDUMP) $(ORDERED_REDUCTION_FLAGS) --output $(OUT)/elf-audit.json
+	$(PYTHON) $(TOOLS)/check_nr_elf.py $< --objdump $(OBJDUMP) $(FPGA_REDUCTION_AUDIT_FLAGS) --output $(OUT)/elf-audit.json
 	$(OBJCOPY) -O binary $< $@
 	@echo "built $@"
 bin: $(BIN)
